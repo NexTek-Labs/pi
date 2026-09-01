@@ -535,17 +535,22 @@ Fired after user submits prompt, before agent loop. Can inject a message and/or 
 pi.on("before_agent_start", async (event, ctx) => {
   // event.prompt - user's prompt text
   // event.images - attached images (if any)
-  // event.systemPrompt - current chained system prompt for this handler
-  //   (includes changes from earlier before_agent_start handlers)
-  // event.systemPromptOptions - structured options used to build the system prompt
+  // event.systemPrompt - current system prompt, rendered on demand; includes
+  //   option mutations and full replacements from earlier handlers
+  // event.systemPromptOptions - mutable structured options used to build the prompt
   //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
+  //   .forceSystemPrompt - full replacement returned by an earlier handler
   //   .selectedTools - tools currently active in the prompt
   //   .toolSnippets - one-line descriptions for each tool
   //   .promptGuidelines - custom guideline bullets
   //   .appendSystemPrompt - text from --append-system-prompt flags
+  //   .sections - custom XML-wrapped sections keyed by tag name
   //   .cwd - working directory
   //   .contextFiles - AGENTS.md files and other loaded context files
   //   .skills - loaded skills
+  // Collection fields are always initialized. Mutations are visible to later handlers.
+  event.systemPromptOptions.promptGuidelines.push("Keep reviews focused.");
+  event.systemPromptOptions.sections.review_mode = "Review changes carefully.";
 
   return {
     // Inject a persistent message (stored in session, sent to LLM)
@@ -560,7 +565,9 @@ pi.on("before_agent_start", async (event, ctx) => {
 });
 ```
 
-The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
+The `systemPromptOptions` field is a mutable per-run clone of the structured data Pi uses to build the system prompt. Collection fields are always initialized, and later handlers observe mutations made by earlier handlers through both `event.systemPromptOptions` and the lazily rendered `event.systemPrompt`/`ctx.getSystemPrompt()`. Custom `sections` are rendered at the end of the prompt in insertion order as `<section_name>content</section_name>`; section names must match `^[a-z][a-z0-9_-]*$`.
+
+Returning `systemPrompt` remains the full-replacement escape hatch. Pi stores it as `forceSystemPrompt` for the rest of the handler chain, so ordinary option mutations no longer affect rendering unless a later handler clears that field.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 

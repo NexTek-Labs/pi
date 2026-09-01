@@ -1091,10 +1091,11 @@ export class AgentSession {
 			skills: loadedSkills,
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
-			appendSystemPrompt,
+			appendSystemPrompt: appendSystemPrompt ?? "",
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			sections: {},
 		};
 		return buildSystemPrompt(this._baseSystemPromptOptions);
 	}

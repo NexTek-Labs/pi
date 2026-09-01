@@ -8,40 +8,81 @@ import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
-	/** Tools to include in prompt. Default: [read, bash, edit, write] */
-	selectedTools?: string[];
+	/** Full prompt replacement set by a before_agent_start handler. */
+	forceSystemPrompt?: string;
+	/** Tools to include in prompt. */
+	selectedTools: string[];
 	/** Optional one-line tool snippets keyed by tool name. */
-	toolSnippets?: Record<string, string>;
+	toolSnippets: Record<string, string>;
 	/** Additional guideline bullets appended to the default system prompt guidelines. */
-	promptGuidelines?: string[];
-	/** Text to append to system prompt. */
-	appendSystemPrompt?: string;
+	promptGuidelines: string[];
+	/** Text appended from user configuration. */
+	appendSystemPrompt: string;
+	/** Additional XML-wrapped prompt sections keyed by tag name. */
+	sections: Record<string, string>;
 	/** Working directory. */
 	cwd: string;
 	/** Pre-loaded context files. */
-	contextFiles?: Array<{ path: string; content: string }>;
+	contextFiles: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
-	skills?: Skill[];
+	skills: Skill[];
+}
+
+/** Backwards-compatible input accepted by the prompt builder. Hooks receive normalized options. */
+export type BuildSystemPromptInput = Pick<BuildSystemPromptOptions, "cwd"> &
+	Partial<Omit<BuildSystemPromptOptions, "cwd">>;
+
+const SYSTEM_PROMPT_SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
+
+/** Normalize prompt input into the mutable, collection-complete shape exposed to extensions. */
+export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptInput): BuildSystemPromptOptions {
+	return {
+		customPrompt: input.customPrompt,
+		forceSystemPrompt: input.forceSystemPrompt,
+		selectedTools: [...(input.selectedTools ?? [])],
+		toolSnippets: { ...(input.toolSnippets ?? {}) },
+		promptGuidelines: [...(input.promptGuidelines ?? [])],
+		appendSystemPrompt: input.appendSystemPrompt ?? "",
+		sections: { ...(input.sections ?? {}) },
+		cwd: input.cwd,
+		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
+		skills: [...(input.skills ?? [])],
+	};
+}
+
+function appendCustomSections(prompt: string, sections: Record<string, string>): string {
+	const rendered: string[] = [];
+	for (const [name, content] of Object.entries(sections)) {
+		if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {
+			throw new Error(`Invalid system prompt section name: ${name}`);
+		}
+		if (content.length > 0) {
+			rendered.push(`<${name}>\n${content}\n</${name}>`);
+		}
+	}
+	if (rendered.length === 0) return prompt;
+	return `${prompt}${prompt.endsWith("\n") ? "\n" : "\n\n"}${rendered.join("\n\n")}`;
 }
 
 /** Build the system prompt with tools, guidelines, and context */
-export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
+export function buildSystemPrompt(input: BuildSystemPromptInput): string {
+	const options = normalizeBuildSystemPromptOptions(input);
 	const {
 		customPrompt,
+		forceSystemPrompt,
 		selectedTools,
 		toolSnippets,
 		promptGuidelines,
 		appendSystemPrompt,
+		sections,
 		cwd,
-		contextFiles: providedContextFiles,
-		skills: providedSkills,
+		contextFiles,
+		skills,
 	} = options;
+	if (forceSystemPrompt !== undefined) return forceSystemPrompt;
+
 	const promptCwd = cwd.replace(/\\/g, "/");
-
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
-
-	const contextFiles = providedContextFiles ?? [];
-	const skills = providedSkills ?? [];
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -61,14 +102,14 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		}
 
 		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
+		const customPromptHasRead = selectedTools.includes("read");
 		if (customPromptHasRead && skills.length > 0) {
 			prompt += formatSkillsForPrompt(skills);
 		}
 
 		prompt += `\nCurrent working directory: ${promptCwd}\n`;
 
-		return prompt;
+		return appendCustomSections(prompt, sections);
 	}
 
 	// Get absolute paths to documentation and examples
@@ -78,7 +119,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	// Build tools list based on selected tools.
 	// A tool appears in Available tools only when the caller provides a one-line snippet.
-	const tools = selectedTools || ["read", "bash", "edit", "write"];
+	const tools = selectedTools;
 	const visibleTools = tools.filter((name) => !!toolSnippets?.[name]);
 	const toolsList =
 		visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets![name]}`).join("\n") : "(none)";
@@ -165,5 +206,5 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 
 	prompt += `\nCurrent working directory: ${promptCwd}`;
 
-	return prompt;
+	return appendCustomSections(prompt, sections);
 }

@@ -20,6 +20,7 @@ import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import type { ModelRegistry } from "../src/core/model-registry.ts";
 import type { ScopedModel } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { buildSystemPrompt } from "../src/core/system-prompt.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -764,16 +765,55 @@ describe("ExtensionRunner", () => {
 			runner.onError((error) => errors.push(error.error));
 			runner.bindCore(extensionActions, extensionContextActions);
 
-			const chained = await runner.emitBeforeAgentStart("hello", undefined, "base", {
-				cwd: tempDir,
-			});
+			const options = { customPrompt: "base", cwd: tempDir };
+			const basePrompt = buildSystemPrompt(options);
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, basePrompt, options);
 
 			expect(errors).toEqual([]);
 
 			expect(chained).toEqual({
 				messages: undefined,
-				systemPrompt: "base\nfirst\nsecond",
+				systemPrompt: `${basePrompt}\nfirst\nsecond`,
 			});
+		});
+
+		it("renders mutable system prompt options for later handlers", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", (event) => {
+						event.systemPromptOptions.promptGuidelines.push("First mutable guideline.");
+						event.systemPromptOptions.sections.plan_mode = "Do not modify files.";
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", (event, ctx) => {
+						if (!event.systemPrompt.includes("First mutable guideline.")) throw new Error("stale event prompt");
+						if (!ctx.getSystemPrompt().includes("<plan_mode>")) throw new Error("stale context prompt");
+						event.systemPromptOptions.sections.plan_mode += "\\n\\nAsk before leaving plan mode.";
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "mutable-prompt-1.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "mutable-prompt-2.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const options = { cwd: tempDir };
+			const basePrompt = buildSystemPrompt(options);
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, basePrompt, options);
+
+			expect(errors).toEqual([]);
+			expect(chained?.systemPrompt).toContain("- First mutable guideline.");
+			expect(chained?.systemPrompt).toContain(
+				"<plan_mode>\nDo not modify files.\n\nAsk before leaving plan mode.\n</plan_mode>",
+			);
 		});
 	});
 

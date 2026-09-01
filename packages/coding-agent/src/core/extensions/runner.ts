@@ -11,7 +11,12 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import type { SessionManager } from "../session-manager.ts";
-import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import {
+	type BuildSystemPromptInput,
+	type BuildSystemPromptOptions,
+	buildSystemPrompt,
+	normalizeBuildSystemPromptOptions,
+} from "../system-prompt.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -286,7 +291,8 @@ export class ExtensionRunner {
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
-	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
+	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () =>
+		normalizeBuildSystemPromptOptions({ cwd: this.cwd });
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -351,7 +357,8 @@ export class ExtensionRunner {
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
-		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
+		this.getSystemPromptOptionsFn =
+			contextActions.getSystemPromptOptions ?? (() => normalizeBuildSystemPromptOptions({ cwd: this.cwd }));
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -1132,19 +1139,19 @@ export class ExtensionRunner {
 		prompt: string,
 		images: ImageContent[] | undefined,
 		systemPrompt: string,
-		systemPromptOptions: BuildSystemPromptOptions,
+		systemPromptOptions: BuildSystemPromptInput,
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
-		let currentSystemPrompt = systemPrompt;
+		const currentOptions = structuredClone(normalizeBuildSystemPromptOptions(systemPromptOptions));
+		const renderSystemPrompt = (): string => buildSystemPrompt(currentOptions);
 		const ctx = Object.defineProperties(
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
 		) as ExtensionContext;
 		ctx.getSystemPrompt = () => {
 			this.assertActive();
-			return currentSystemPrompt;
+			return renderSystemPrompt();
 		};
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
-		let systemPromptModified = false;
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("before_agent_start");
@@ -1156,8 +1163,10 @@ export class ExtensionRunner {
 						type: "before_agent_start",
 						prompt,
 						images,
-						systemPrompt: currentSystemPrompt,
-						systemPromptOptions,
+						get systemPrompt() {
+							return renderSystemPrompt();
+						},
+						systemPromptOptions: currentOptions,
 					};
 					const handlerResult = await handler(event, ctx);
 
@@ -1167,8 +1176,7 @@ export class ExtensionRunner {
 							messages.push(result.message);
 						}
 						if (result.systemPrompt !== undefined) {
-							currentSystemPrompt = result.systemPrompt;
-							systemPromptModified = true;
+							currentOptions.forceSystemPrompt = result.systemPrompt;
 						}
 					}
 				} catch (err) {
@@ -1184,10 +1192,11 @@ export class ExtensionRunner {
 			}
 		}
 
-		if (messages.length > 0 || systemPromptModified) {
+		const currentSystemPrompt = renderSystemPrompt();
+		if (messages.length > 0 || currentSystemPrompt !== systemPrompt) {
 			return {
 				messages: messages.length > 0 ? messages : undefined,
-				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
+				systemPrompt: currentSystemPrompt !== systemPrompt ? currentSystemPrompt : undefined,
 			};
 		}
 

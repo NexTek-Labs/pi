@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { Static, TSchema } from "typebox";
 import { getExperimentalToolSampling } from "../core/experimental.ts";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "../core/system-prompt.ts";
+import { type BuildSystemPromptInput, buildSystemPrompt } from "../core/system-prompt.ts";
 import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";
 import { editToolSystemPromptContribution } from "../core/tools/edit.ts";
 import { readToolSystemPromptContribution } from "../core/tools/read.ts";
@@ -43,7 +43,7 @@ export interface CreateCodingAgentHarnessOptions extends Omit<AgentHarnessOption
 	/** Path to the JSONL session file exposed to default bash commands as PI_SESSION_FILE. */
 	sessionFile?: string;
 	tools?: CodingAgentHarnessTool[];
-	systemPromptOptions?: Omit<BuildSystemPromptOptions, "cwd" | "promptGuidelines" | "selectedTools" | "toolSnippets">;
+	systemPromptOptions?: Omit<BuildSystemPromptInput, "cwd" | "promptGuidelines" | "selectedTools" | "toolSnippets">;
 }
 
 export interface BuildCodingAgentHarnessSystemPromptOptions {
