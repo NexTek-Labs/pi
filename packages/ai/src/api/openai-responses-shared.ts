@@ -33,6 +33,11 @@ import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
+	getSystemMessageText,
+	type ResolvedToolLoadoutChange,
+	resolveMessageToolLoadout,
+} from "../utils/system-messages.ts";
+import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
 	getGrammarToolInput,
@@ -181,9 +186,52 @@ export function convertResponsesMessages<TApi extends Api>(
 		});
 	}
 
+	const appendToolLoadout = (loadout: ResolvedToolLoadoutChange, seed: string): void => {
+		const added = loadout.added.filter((tool) => {
+			if (loadedToolNames.has(tool.name)) return false;
+			loadedToolNames.add(tool.name);
+			return true;
+		});
+		if (added.length === 0) return;
+		if (options?.deferredToolsMode === "additional-tools") {
+			messages.push({
+				type: "additional_tools",
+				role: "developer",
+				tools: convertResponsesTools(added, options.toolOptions),
+			} satisfies ResponseInputItem);
+			return;
+		}
+		if (options?.deferredToolsMode === "tool-search") {
+			const names = added.map((tool) => tool.name);
+			const searchCallId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
+			messages.push({
+				type: "tool_search_call",
+				call_id: searchCallId,
+				execution: "client",
+				status: "completed",
+				arguments: { query: names.join(" "), limit: names.length },
+			} satisfies ResponseInputItem);
+			messages.push({
+				type: "tool_search_output",
+				call_id: searchCallId,
+				execution: "client",
+				status: "completed",
+				tools: convertResponsesTools(added, { ...options.toolOptions, deferLoading: true }),
+			} satisfies ResponseToolSearchOutputItemParam);
+			return;
+		}
+		throw new Error("OpenAI Responses does not support transcript-anchored tool addition");
+	};
+
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			appendToolLoadout(resolveMessageToolLoadout(msg), `system:${msgIndex}`);
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) {
+				messages.push({ role: "system", content: sanitizeSurrogates(text) });
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({
 					role: "user",
@@ -311,40 +359,10 @@ export function convertResponsesMessages<TApi extends Api>(
 				});
 			}
 
-			const deferredTools: Tool[] = [];
-			for (const name of msg.addedToolNames ?? []) {
-				const tool = options?.deferredTools?.get(name);
-				if (!tool || loadedToolNames.has(name)) continue;
-				loadedToolNames.add(name);
-				deferredTools.push(tool);
-			}
-			if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
-				messages.push({
-					type: "additional_tools",
-					role: "developer",
-					tools: convertResponsesTools(deferredTools, options.toolOptions),
-				} satisfies ResponseInputItem);
-			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
-				const names = deferredTools.map((tool) => tool.name);
-				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
-				messages.push({
-					type: "tool_search_call",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					arguments: { query: names.join(" "), limit: names.length },
-				} satisfies ResponseInputItem);
-				messages.push({
-					type: "tool_search_output",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					tools: convertResponsesTools(deferredTools, {
-						...options.toolOptions,
-						deferLoading: true,
-					}),
-				} satisfies ResponseToolSearchOutputItemParam);
-			}
+			appendToolLoadout(
+				resolveMessageToolLoadout(msg, (name) => options?.deferredTools?.get(name)),
+				msg.toolCallId,
+			);
 		}
 		msgIndex++;
 	}

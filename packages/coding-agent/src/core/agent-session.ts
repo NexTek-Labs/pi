@@ -107,7 +107,21 @@ import { getLatestCompactionEntry } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import {
+	type BuildSystemPromptOptions,
+	buildSystemPrompt,
+	buildSystemPromptPieces,
+	normalizeBuildSystemPromptOptions,
+	renderSystemPrompt,
+} from "./system-prompt.ts";
+import {
+	consolidateSystemPromptMessages,
+	createSystemPromptUpdateMessage,
+	getContextUpdateCapabilities,
+	type ModelContextState,
+	prepareModelContextUpdate,
+	systemPromptTool,
+} from "./system-prompt-updates.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -292,6 +306,10 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+interface ModelContextRuntimeState extends ModelContextState {
+	options: BuildSystemPromptOptions;
+}
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -377,10 +395,9 @@ export class AgentSession {
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
 
-	// Base system prompt (without extension appends) - used to apply fresh appends each turn
-	private _baseSystemPrompt = "";
+	// Base prompt options are rebuilt when resources or the default tool selection change.
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
-	private _systemPromptOverride?: string;
+	private _modelContextState?: ModelContextRuntimeState;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -408,6 +425,10 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
+		// A resumed process has no provider cache to preserve. Restore the latest complete model-visible state.
+		if (this._restoreModelContextState()) {
+			this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
+		}
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -569,12 +590,34 @@ export class AgentSession {
 			const context = await this._compactBeforeNextAssistantResponse(turn.context);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
+			let updateMessage: AgentMessage | undefined;
+			let transcriptUpdate: "keep" | "replace" = "keep";
+
+			const options = normalizeBuildSystemPromptOptions({
+				...(this._modelContextState?.options ?? this._baseSystemPromptOptions),
+				selectedTools: this.getActiveToolNames(),
+				toolSnippets: this._baseSystemPromptOptions.toolSnippets,
+				toolGuidelines: this._baseSystemPromptOptions.toolGuidelines,
+			});
+			const prepared = this._preparePromptAndToolLoadout(options);
+			updateMessage = prepared.message;
+			transcriptUpdate = prepared.transcriptUpdate;
+			if (updateMessage) {
+				this.agent.state.messages.push(updateMessage);
+				this.sessionManager.appendMessage(updateMessage);
+			}
 
 			return {
 				...previousSnapshot,
 				context: {
 					...nextContext,
-					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
+					messages:
+						transcriptUpdate === "replace"
+							? this.agent.state.messages.slice()
+							: updateMessage
+								? [...nextContext.messages, updateMessage]
+								: nextContext.messages,
+					systemPrompt: this.agent.state.systemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
 				model: this.agent.state.model,
@@ -682,6 +725,7 @@ export class AgentSession {
 					event.message.details,
 				);
 			} else if (
+				event.message.role === "system" ||
 				event.message.role === "user" ||
 				event.message.role === "assistant" ||
 				event.message.role === "toolResult"
@@ -980,9 +1024,9 @@ export class AgentSession {
 		}
 		this.agent.state.tools = tools;
 
-		// Rebuild base system prompt with new tool set
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+		// Rebuild the default prompt for the next run. An active run keeps its provider baseline.
+		const baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
+		if (!this.isStreaming) this.agent.state.systemPrompt = baseSystemPrompt;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1066,18 +1110,11 @@ export class AgentSession {
 	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
-		const promptGuidelines: string[] = [];
-		for (const name of validToolNames) {
+		for (const name of this._toolRegistry.keys()) {
 			const snippet = this._toolPromptSnippets.get(name);
-			if (snippet) {
-				toolSnippets[name] = snippet;
-			}
-
-			const toolGuidelines = this._toolPromptGuidelines.get(name);
-			if (toolGuidelines) {
-				promptGuidelines.push(...toolGuidelines);
-			}
+			if (snippet) toolSnippets[name] = snippet;
 		}
+		const toolGuidelines = Object.fromEntries(this._toolPromptGuidelines);
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
@@ -1094,10 +1131,80 @@ export class AgentSession {
 			appendSystemPrompt: appendSystemPrompt ?? "",
 			selectedTools: validToolNames,
 			toolSnippets,
-			promptGuidelines,
+			toolGuidelines,
+			promptGuidelines: [],
 			sections: {},
 		};
 		return buildSystemPrompt(this._baseSystemPromptOptions);
+	}
+
+	private _preparePromptAndToolLoadout(options: BuildSystemPromptOptions) {
+		options.selectedTools = [...new Set(options.selectedTools)].filter((name) => this._toolRegistry.has(name));
+		const selectedTools = options.selectedTools.flatMap((name) => {
+			const tool = this._toolRegistry.get(name);
+			return tool ? [tool] : [];
+		});
+		const update = prepareModelContextUpdate({
+			options,
+			tools: new Map(selectedTools.map((tool) => [tool.name, systemPromptTool(tool)])),
+			previous: this._modelContextState,
+			capabilities: getContextUpdateCapabilities(this.model),
+		});
+		const message = update.type === "incremental" ? createSystemPromptUpdateMessage(update) : undefined;
+		if (update.type !== "unchanged") {
+			this.sessionManager.appendSystemPromptState(update.state.prompt.pieces, [
+				...update.state.tools.visible.values(),
+			]);
+		}
+
+		// Commit only after prompt validation and durable state preparation succeeds.
+		this.agent.state.tools = selectedTools;
+		this._modelContextState = { ...update.state, options };
+		const transcriptUpdate: "keep" | "replace" =
+			update.type === "initial" || update.type === "replacement" ? "replace" : "keep";
+		if (update.type === "replacement") {
+			this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
+		}
+		this.agent.state.systemPrompt = update.state.prompt.baseline;
+		return { requestPrompt: update.state.prompt.baseline, message, transcriptUpdate };
+	}
+
+	private _checkpointModelContext(): void {
+		this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
+		const options = this._modelContextState?.options ?? this._baseSystemPromptOptions;
+		const pieces = this._modelContextState?.prompt.pieces ?? buildSystemPromptPieces(options);
+		const prompt = renderSystemPrompt(pieces);
+		const tools =
+			this._modelContextState?.tools.visible ??
+			new Map(this.agent.state.tools.map((tool) => [tool.name, systemPromptTool(tool)]));
+		this._modelContextState = {
+			options,
+			prompt: { pieces, effective: prompt, baseline: prompt },
+			tools: { visible: tools, catalog: new Map(tools) },
+		};
+		this.agent.state.systemPrompt = prompt;
+	}
+
+	private _restoreModelContextState(): ModelContextRuntimeState | undefined {
+		const stored = this.sessionManager.getSystemPromptState();
+		if (!stored) {
+			this._modelContextState = undefined;
+			return undefined;
+		}
+		const prompt = renderSystemPrompt(stored.prompt);
+		const tools = new Map(stored.tools.map((tool) => [tool.name, tool]));
+		this._modelContextState = {
+			options: this._baseSystemPromptOptions,
+			prompt: { pieces: stored.prompt, effective: prompt, baseline: prompt },
+			tools: { visible: tools, catalog: new Map(tools) },
+		};
+		this.agent.state.systemPrompt = prompt;
+		return this._modelContextState;
+	}
+
+	private _resetModelContextState(): void {
+		this._modelContextState = undefined;
+		this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
 	}
 
 	// =========================================================================
@@ -1112,7 +1219,8 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
-			this._systemPromptOverride = undefined;
+			this.agent.state.systemPrompt =
+				this._modelContextState?.prompt.effective ?? buildSystemPrompt(this._baseSystemPromptOptions);
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
@@ -1279,32 +1387,23 @@ export class AgentSession {
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				this._baseSystemPrompt,
 				this._baseSystemPromptOptions,
 			);
 			// Add all custom messages from extensions
-			if (result?.messages) {
-				for (const msg of result.messages) {
-					messages.push({
-						role: "custom",
-						customType: msg.customType,
-						// Untyped extensions can pass null/missing content; normalize at ingestion.
-						content: msg.content ?? [],
-						display: msg.display,
-						details: msg.details,
-						timestamp: Date.now(),
-					});
-				}
+			for (const msg of result.messages) {
+				messages.push({
+					role: "custom",
+					customType: msg.customType,
+					// Untyped extensions can pass null/missing content; normalize at ingestion.
+					content: msg.content ?? [],
+					display: msg.display,
+					details: msg.details,
+					timestamp: Date.now(),
+				});
 			}
-			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt !== undefined) {
-				this._systemPromptOverride = result.systemPrompt;
-				this.agent.state.systemPrompt = result.systemPrompt;
-			} else {
-				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this._systemPromptOverride = undefined;
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
-			}
+			const preparedRun = this._preparePromptAndToolLoadout(result.systemPromptOptions);
+			if (preparedRun.message) messages.push(preparedRun.message);
+			this.agent.state.systemPrompt = preparedRun.requestPrompt;
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -1641,6 +1740,7 @@ export class AgentSession {
 		source: "set" | "cycle" | "restore",
 	): Promise<void> {
 		if (modelsAreEqual(previousModel, nextModel)) return;
+		this._resetModelContextState();
 		await this._extensionRunner.emit({
 			type: "model_select",
 			model: nextModel,
@@ -2027,7 +2127,8 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
-			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
+			this._checkpointModelContext();
+			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -2352,7 +2453,8 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
-			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
+			this._checkpointModelContext();
+			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -2482,8 +2584,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this.agent.state.systemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -2818,6 +2919,7 @@ export class AgentSession {
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		await this._resourceLoader.reload();
+		this._resetModelContextState();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
 			flagValues: previousFlagValues,
@@ -3278,6 +3380,8 @@ export class AgentSession {
 			// Update agent state
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._restoreModelContextState();
+			this._checkpointModelContext();
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({

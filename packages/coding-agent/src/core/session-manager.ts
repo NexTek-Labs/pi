@@ -1,5 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	type ImageContent,
+	type Message,
+	type TextContent,
+	type Tool,
+	type Usage,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -26,6 +33,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import type { SystemPromptPiece } from "./system-prompt.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -53,6 +61,12 @@ export interface SessionEntryBase {
 export interface SessionMessageEntry extends SessionEntryBase {
 	type: "message";
 	message: AgentMessage;
+}
+
+export interface SystemPromptEntry extends SessionEntryBase {
+	type: "system_prompt";
+	prompt: SystemPromptPiece[];
+	tools: Tool[];
 }
 
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
@@ -143,6 +157,7 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 /** Session entry - has id/parentId for tree structure (returned by "read" methods in SessionManager) */
 export type SessionEntry =
 	| SessionMessageEntry
+	| SystemPromptEntry
 	| ThinkingLevelChangeEntry
 	| ModelChangeEntry
 	| CompactionEntry
@@ -203,6 +218,7 @@ export type ReadonlySessionManager = Pick<
 	| "getEntries"
 	| "getTree"
 	| "getSessionName"
+	| "getSystemPromptState"
 >;
 
 function createSessionId(): string {
@@ -386,7 +402,10 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		// Session files are parsed without validation; old versions, forks, or
 		// hand-edited files can contain messages with null/missing content.
 		if (
-			(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
+			(message.role === "system" ||
+				message.role === "user" ||
+				message.role === "assistant" ||
+				message.role === "toolResult") &&
 			message.content == null
 		) {
 			return [{ ...message, content: [] }];
@@ -1067,6 +1086,20 @@ export class SessionManager {
 		return entry.id;
 	}
 
+	/** Append the complete current prompt and active tool state as a non-message session entry. */
+	appendSystemPromptState(prompt: SystemPromptPiece[], tools: Tool[]): string {
+		const entry: SystemPromptEntry = {
+			type: "system_prompt",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			prompt,
+			tools,
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
 	/** Append a thinking level change as child of current leaf, then advance leaf. Returns entry id. */
 	appendThinkingLevelChange(thinkingLevel: string): string {
 		const entry: ThinkingLevelChangeEntry = {
@@ -1145,6 +1178,16 @@ export class SessionManager {
 		};
 		this._appendEntry(entry);
 		return entry.id;
+	}
+
+	/** Get the latest complete prompt and active tool state on the active branch. */
+	getSystemPromptState(): SystemPromptEntry | undefined {
+		const branch = this.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (entry.type === "system_prompt") return entry;
+		}
+		return undefined;
 	}
 
 	/** Get the current session name from the latest session_info entry, if any. */

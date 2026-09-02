@@ -5,6 +5,7 @@ import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness } from "../harness.ts";
 
 describe("extension active tools next-turn refresh", () => {
+	// Regression test for #6162.
 	it("applies pi.setActiveTools before the next provider request in the same run", async () => {
 		const extensionFactories: ExtensionFactory[] = [
 			(pi) => {
@@ -44,6 +45,8 @@ describe("extension active tools next-turn refresh", () => {
 			harness.session.setActiveToolsByName(["switch_tools"]);
 
 			const providerToolNames: string[][] = [];
+			let secondRequestRoles: string[] = [];
+			let hasToolLoadoutUpdate = false;
 			harness.setResponses([
 				(context) => {
 					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
@@ -51,6 +54,13 @@ describe("extension active tools next-turn refresh", () => {
 				},
 				(context) => {
 					providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+					secondRequestRoles = context.messages.map((message) => message.role);
+					hasToolLoadoutUpdate = context.messages.some(
+						(message) =>
+							message.role === "system" &&
+							typeof message.content !== "string" &&
+							message.content.some((block) => block.type === "toolLoadout"),
+					);
 					return fauxAssistantMessage("done");
 				},
 			]);
@@ -61,6 +71,8 @@ describe("extension active tools next-turn refresh", () => {
 
 			expect(harness.session.getActiveToolNames()).toEqual(["after_switch"]);
 			expect(providerToolNames).toEqual([["switch_tools"], ["after_switch"]]);
+			expect(secondRequestRoles.slice(-2)).toEqual(["toolResult", "system"]);
+			expect(hasToolLoadoutUpdate).toBe(true);
 		} finally {
 			harness.cleanup();
 		}

@@ -32,6 +32,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { getSystemMessageToolLoadout, hardFallbackSystemMessages } from "../utils/system-messages.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -533,8 +534,14 @@ function buildRequestBody(
 		: model.compat?.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
-	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+	const hasUnsupportedToolAddition =
+		deferredToolsMode === undefined &&
+		context.messages.some(
+			(message) => message.role === "system" && getSystemMessageToolLoadout(message).added.length > 0,
+		);
+	const requestContext = hasUnsupportedToolAddition ? hardFallbackSystemMessages(context) : context;
+	const toolPlacement = splitDeferredTools(requestContext, deferredToolsMode !== undefined);
+	const messages = convertResponsesMessages(model, requestContext, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
@@ -550,7 +557,7 @@ function buildRequestBody(
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: context.systemPrompt || "You are a helpful assistant.",
+		instructions: requestContext.systemPrompt || "You are a helpful assistant.",
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],

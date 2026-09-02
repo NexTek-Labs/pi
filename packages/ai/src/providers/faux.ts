@@ -19,6 +19,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import { getSystemMessageText } from "../utils/system-messages.ts";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -194,6 +195,9 @@ function toolResultToText(message: ToolResultMessage): string {
 }
 
 function messageToText(message: Message): string {
+	if (message.role === "system") {
+		return getSystemMessageText(message);
+	}
 	if (message.role === "user") {
 		return contentToText(message.content);
 	}

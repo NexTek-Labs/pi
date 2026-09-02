@@ -19,6 +19,11 @@ import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import {
+	getSystemMessageText,
+	getSystemMessageToolLoadout,
+	hardFallbackSystemMessages,
+} from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -135,10 +140,18 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
+			const hasToolChanges = context.messages.some((message) => {
+				if (message.role !== "system") return false;
+				const loadout = getSystemMessageToolLoadout(message);
+				return loadout.added.length > 0 || loadout.removed.length > 0;
+			});
+			const requestContext = hasToolChanges ? hardFallbackSystemMessages(context) : context;
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
-			const transformedMessages = transformMessages(context.messages, model, (id) => normalizeMistralToolCallId(id));
+			const transformedMessages = transformMessages(requestContext.messages, model, (id) =>
+				normalizeMistralToolCallId(id),
+			);
 
-			let payload = buildChatPayload(model, context, transformedMessages, options);
+			let payload = buildChatPayload(model, requestContext, transformedMessages, options);
 			const nextPayload = await options?.onPayload?.(payload, model);
 			if (nextPayload !== undefined) {
 				payload = nextPayload as MistralChatPayload;
@@ -785,6 +798,11 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 	const result: MistralChatMessage[] = [];
 
 	for (const msg of messages) {
+		if (msg.role === "system") {
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) result.push({ role: "system", content: sanitizeSurrogates(text) });
+			continue;
+		}
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				result.push({ role: "user", content: sanitizeSurrogates(msg.content) });

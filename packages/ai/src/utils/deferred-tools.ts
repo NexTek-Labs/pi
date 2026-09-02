@@ -1,4 +1,5 @@
 import type { Context, Tool } from "../types.ts";
+import { getSystemMessageToolLoadout, resolveMessageToolLoadout } from "./system-messages.ts";
 
 type ToolNameNormalizer = (name: string) => string;
 
@@ -10,21 +11,31 @@ export function splitDeferredTools(
 	enabled: boolean,
 	normalizeName: ToolNameNormalizer = identityToolName,
 ): { immediate: Tool[]; deferred: Map<string, Tool> } {
+	let declaredTools: Tool[] = [];
+	for (const message of context.messages) {
+		if (message.role !== "system") continue;
+		const tools = getSystemMessageToolLoadout(message).tools;
+		if (tools.length > 0) declaredTools = tools;
+	}
 	const uniqueTools = new Map<string, Tool>();
+	for (const tool of declaredTools) uniqueTools.set(normalizeName(tool.name), tool);
 	for (const tool of context.tools ?? []) uniqueTools.set(normalizeName(tool.name), tool);
 	if (!enabled) return { immediate: [...uniqueTools.values()], deferred: new Map() };
 
 	const deferredNames = new Set<string>();
 	const usedNames = new Set<string>();
 	for (const message of context.messages) {
-		if (message.role === "assistant") {
-			for (const block of message.content) {
-				if (block.type === "toolCall") usedNames.add(normalizeName(block.name));
-			}
-		} else if (message.role === "toolResult") {
-			for (const name of message.addedToolNames ?? []) {
+		if (message.role === "system" || message.role === "toolResult") {
+			const loadout = resolveMessageToolLoadout(message, (name) => uniqueTools.get(normalizeName(name)));
+			for (const tool of loadout.removed) uniqueTools.set(normalizeName(tool.name), tool);
+			for (const tool of loadout.added) uniqueTools.set(normalizeName(tool.name), tool);
+			for (const name of loadout.addedNames) {
 				const normalizedName = normalizeName(name);
 				if (!usedNames.has(normalizedName)) deferredNames.add(normalizedName);
+			}
+		} else if (message.role === "assistant") {
+			for (const block of message.content) {
+				if (block.type === "toolCall") usedNames.add(normalizeName(block.name));
 			}
 		}
 	}

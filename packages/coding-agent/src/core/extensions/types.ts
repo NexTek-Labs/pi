@@ -723,8 +723,8 @@ export interface BeforeAgentStartEvent {
 	/** The current system prompt, rendered on demand from systemPromptOptions and earlier handler changes. */
 	readonly systemPrompt: string;
 	/**
-	 * Mutable options used to build the system prompt. Later handlers observe mutations made by earlier handlers.
-	 * Collection fields are always initialized.
+	 * Mutable options used to prepare the run. Later handlers observe mutations made by earlier handlers.
+	 * `selectedTools` controls both the rendered prompt and executable tool loadout. Collection fields are always initialized.
 	 */
 	systemPromptOptions: BuildSystemPromptOptions;
 }

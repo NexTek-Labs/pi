@@ -118,10 +118,10 @@ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltI
 	return builtinKeybindings;
 };
 
-/** Combined result from all before_agent_start handlers */
+/** Combined result from all before_agent_start handlers. */
 interface BeforeAgentStartCombinedResult {
-	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
-	systemPrompt?: string;
+	messages: NonNullable<BeforeAgentStartEventResult["message"]>[];
+	systemPromptOptions: BuildSystemPromptOptions;
 }
 
 /**
@@ -1138,10 +1138,9 @@ export class ExtensionRunner {
 	async emitBeforeAgentStart(
 		prompt: string,
 		images: ImageContent[] | undefined,
-		systemPrompt: string,
 		systemPromptOptions: BuildSystemPromptInput,
-	): Promise<BeforeAgentStartCombinedResult | undefined> {
-		const currentOptions = structuredClone(normalizeBuildSystemPromptOptions(systemPromptOptions));
+	): Promise<BeforeAgentStartCombinedResult> {
+		const currentOptions = normalizeBuildSystemPromptOptions(systemPromptOptions);
 		const renderSystemPrompt = (): string => buildSystemPrompt(currentOptions);
 		const ctx = Object.defineProperties(
 			{},
@@ -1192,15 +1191,7 @@ export class ExtensionRunner {
 			}
 		}
 
-		const currentSystemPrompt = renderSystemPrompt();
-		if (messages.length > 0 || currentSystemPrompt !== systemPrompt) {
-			return {
-				messages: messages.length > 0 ? messages : undefined,
-				systemPrompt: currentSystemPrompt !== systemPrompt ? currentSystemPrompt : undefined,
-			};
-		}
-
-		return undefined;
+		return { messages, systemPromptOptions: currentOptions };
 	}
 
 	async emitResourcesDiscover(

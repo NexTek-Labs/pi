@@ -51,10 +51,21 @@ interface OpenAIAdditionalTools {
 	tools: Array<{ type: string; name: string; defer_loading?: boolean }>;
 }
 
+interface OpenAISystemMessage {
+	role: "system" | "developer";
+	content: string;
+	type?: undefined;
+	name?: undefined;
+}
+
 interface OpenAIPayload {
 	tools?: Array<{ name?: string; function?: { name: string } }>;
 	input?: Array<
-		OpenAIAdditionalTools | OpenAIToolSearchCall | OpenAIToolSearchOutput | { type?: string; name?: string }
+		| OpenAIAdditionalTools
+		| OpenAISystemMessage
+		| OpenAIToolSearchCall
+		| OpenAIToolSearchOutput
+		| { type?: string; name?: string }
 	>;
 }
 
@@ -342,8 +353,15 @@ describe("deferred tools", () => {
 		expect(payload.tools?.find((tool) => tool.name === "late_tool")?.defer_loading).toBe(true);
 	});
 
-	it("serializes Kimi deferred tools as system tool definitions", async () => {
-		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+	it("deduplicates legacy and first-class Kimi tool additions", async () => {
+		const baseTool = makeTool("base_tool");
+		const lateTool = makeTool("late_tool");
+		const context = makeContext([baseTool, lateTool]);
+		context.messages.splice(3, 0, {
+			role: "system",
+			content: [{ type: "toolLoadout", tools: [baseTool, lateTool], added: [lateTool], removed: [] }],
+			timestamp: 4,
+		});
 		const payload = await capturePayload<KimiPayload>(makeKimiModel("kimi"), context);
 
 		expect(payload.tools?.map((tool) => tool.function.name)).toEqual(["base_tool"]);
@@ -352,6 +370,7 @@ describe("deferred tools", () => {
 		expect(toolResultIndex).toBeGreaterThanOrEqual(0);
 		expect(systemToolIndex).toBeGreaterThan(toolResultIndex);
 		expect(payload.messages[systemToolIndex]?.tools?.map((tool) => tool.function.name)).toEqual(["late_tool"]);
+		expect(payload.messages.filter((message) => message.tools !== undefined)).toHaveLength(1);
 	});
 
 	it("emits Kimi deferred schemas after all tool results in a batch", () => {
@@ -400,6 +419,122 @@ describe("deferred tools", () => {
 
 		expect(payload.tools?.map((tool) => tool.function.name)).toEqual(["base_tool", "late_tool"]);
 		expect(payload.messages.some((message) => message.tools !== undefined)).toBe(false);
+	});
+
+	it("loads an OpenAI Responses tool from a provider-independent system message", async () => {
+		const lateTool = makeTool("late_tool");
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: [
+						{ type: "toolLoadout", tools: [makeTool("base_tool"), lateTool], added: [lateTool], removed: [] },
+						{ type: "text", text: "late_tool is now available" },
+					],
+					timestamp: 2,
+				},
+			],
+			tools: [makeTool("base_tool"), lateTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
+		const additionalTools = payload.input?.find(
+			(item): item is OpenAIAdditionalTools => item.type === "additional_tools",
+		);
+		const systemMessage = payload.input?.find(
+			(item): item is OpenAISystemMessage => "role" in item && item.role === "system",
+		);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
+		expect(additionalTools?.tools).toMatchObject([{ type: "function", name: "late_tool" }]);
+		expect(systemMessage?.content).toBe("late_tool is now available");
+	});
+
+	it("projects a system-message tool addition through client tool search when required", async () => {
+		const baseTool = makeTool("base_tool");
+		const lateTool = makeTool("late_tool");
+		const model: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "openai-proxy",
+			compat: { supportsAdditionalTools: false, supportsToolSearch: true },
+		};
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: [{ type: "toolLoadout", tools: [baseTool, lateTool], added: [lateTool], removed: [] }],
+					timestamp: 2,
+				},
+			],
+			tools: [baseTool, lateTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(model, context);
+		const searchOutput = payload.input?.find(
+			(item): item is OpenAIToolSearchOutput => item.type === "tool_search_output",
+		);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
+		expect(searchOutput?.tools).toMatchObject([{ type: "function", name: "late_tool", defer_loading: true }]);
+		expect(payload.input?.some((item) => item.type === "additional_tools")).toBe(false);
+	});
+
+	it("hard-falls back when an OpenAI Responses model cannot add tools", async () => {
+		const baseTool = makeTool("base_tool");
+		const lateTool = makeTool("late_tool");
+		const context: Context = {
+			systemPrompt: "old prompt",
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: [
+						{ type: "toolLoadout", tools: [baseTool, lateTool], added: [lateTool], removed: [] },
+						{ type: "text", text: "late_tool is now available" },
+					],
+					systemPrompt: "new prompt",
+					timestamp: 2,
+				},
+			],
+			tools: [baseTool, lateTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.3-chat-latest"), context);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool", "late_tool"]);
+		expect(
+			payload.input?.filter(
+				(item): item is OpenAISystemMessage =>
+					"role" in item && (item.role === "system" || item.role === "developer"),
+			),
+		).toEqual([expect.objectContaining({ content: "new prompt" })]);
+	});
+
+	it("keeps removed OpenAI Responses declarations stable for soft rejection", async () => {
+		const firstTool = makeTool("first_tool");
+		const removedTool = makeTool("removed_tool");
+		const lastTool = makeTool("last_tool");
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: [
+						{
+							type: "toolLoadout",
+							tools: [firstTool, removedTool, lastTool],
+							added: [],
+							removed: [removedTool],
+						},
+						{ type: "text", text: "removed_tool is no longer available" },
+					],
+					timestamp: 2,
+				},
+			],
+			tools: [firstTool, lastTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
+
+		expect(openAIToolNames(payload)).toEqual(["first_tool", "removed_tool", "last_tool"]);
 	});
 
 	it("loads an OpenAI Responses tool through additional_tools", async () => {
@@ -543,8 +678,21 @@ describe("deferred tools", () => {
 			messages: [assistant, makeToolResult(["late_tool"])],
 			tools: [lateTool],
 		});
+		const markedWithFirstClassUpdate = estimateContextTokens({
+			messages: [
+				assistant,
+				makeToolResult(["late_tool"]),
+				{
+					role: "system",
+					content: [{ type: "toolLoadout", tools: [lateTool], added: [lateTool], removed: [] }],
+					timestamp: 5,
+				},
+			],
+			tools: [lateTool],
+		});
 
 		expect(marked.tokens).toBeGreaterThan(plain.tokens + 500);
 		expect(marked.trailingTokens).toBeGreaterThan(plain.trailingTokens + 500);
+		expect(markedWithFirstClassUpdate).toEqual(marked);
 	});
 });

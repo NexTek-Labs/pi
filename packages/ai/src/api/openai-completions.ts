@@ -46,6 +46,12 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
+	getSystemMessageText,
+	getSystemMessageToolLoadout,
+	hardFallbackSystemMessages,
+	resolveMessageToolLoadout,
+} from "../utils/system-messages.ts";
+import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
 	type GrammarToolInputJsonBuffer,
@@ -96,21 +102,9 @@ function hasToolHistory(messages: Message[]): boolean {
 function getDeferredToolNames(messages: Message[]): Set<string> {
 	const names = new Set<string>();
 	for (const message of messages) {
-		if (message.role === "toolResult") {
-			for (const name of message.addedToolNames ?? []) {
-				names.add(name);
-			}
-		}
+		for (const name of resolveMessageToolLoadout(message).addedNames) names.add(name);
 	}
 	return names;
-}
-
-function getToolsByName(tools: Tool[] | undefined, names: Iterable<string>): Tool[] {
-	if (!tools) return [];
-	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
-	return Array.from(names)
-		.map((name) => toolsByName.get(name))
-		.filter((tool): tool is Tool => tool !== undefined);
 }
 
 function isTextContentBlock(block: { type: string }): block is TextContent {
@@ -795,7 +789,13 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const messages = convertMessages(model, context, compat, { grammarToolInputProperties });
+	const hasUnsupportedToolChanges = context.messages.some((message) => {
+		if (message.role !== "system") return false;
+		const loadout = getSystemMessageToolLoadout(message);
+		return loadout.removed.length > 0 || (loadout.added.length > 0 && compat.deferredToolsMode !== "kimi");
+	});
+	const requestContext = hasUnsupportedToolChanges ? hardFallbackSystemMessages(context) : context;
+	const messages = convertMessages(model, requestContext, compat, { grammarToolInputProperties });
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -831,14 +831,14 @@ function buildParams(
 	}
 
 	const deferredToolNames =
-		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(context.messages) : new Set<string>();
-	const activeTools = context.tools?.filter((tool) => !deferredToolNames.has(tool.name));
+		compat.deferredToolsMode === "kimi" ? getDeferredToolNames(requestContext.messages) : new Set<string>();
+	const activeTools = requestContext.tools?.filter((tool) => !deferredToolNames.has(tool.name));
 	if (activeTools && activeTools.length > 0) {
 		params.tools = convertTools(activeTools, compat);
 		if (compat.zaiToolStream) {
 			(params as any).tool_stream = true;
 		}
-	} else if (hasToolHistory(context.messages)) {
+	} else if (hasToolHistory(requestContext.messages)) {
 		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
 		params.tools = [];
 	}
@@ -1173,6 +1173,7 @@ export function convertMessages(
 	options?: ConvertCompletionsMessagesOptions,
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
+	const loadedDeferredToolNames = new Set<string>();
 
 	const normalizeToolCallId = (id: string): string => {
 		// Handle pipe-separated IDs from OpenAI Responses API
@@ -1221,7 +1222,27 @@ export function convertMessages(
 			});
 		}
 
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			const addedTools = resolveMessageToolLoadout(msg).added.filter((tool) => {
+				if (loadedDeferredToolNames.has(tool.name)) return false;
+				loadedDeferredToolNames.add(tool.name);
+				return true;
+			});
+			if (addedTools.length > 0) {
+				if (compat.deferredToolsMode !== "kimi") {
+					throw new Error("OpenAI Chat Completions does not support transcript-anchored tool addition");
+				}
+				const kimiToolMessage: KimiToolSystemMessageParam = {
+					role: "system",
+					tools: convertTools(addedTools, compat),
+				};
+				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
+			}
+			const text = getSystemMessageText(msg);
+			if (text.length > 0) {
+				params.push({ role: "system", content: sanitizeSurrogates(text) });
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				params.push({
 					role: "user",
@@ -1366,7 +1387,8 @@ export function convertMessages(
 			params.push(assistantMsg);
 		} else if (msg.role === "toolResult") {
 			const imageBlocks: Array<{ type: "image_url"; image_url: { url: string } }> = [];
-			const deferredToolNames = new Set<string>();
+			const deferredTools = new Map<string, Tool>();
+			const toolCatalog = new Map((context.tools ?? []).map((tool) => [tool.name, tool]));
 			let j = i;
 
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
@@ -1394,8 +1416,10 @@ export function convertMessages(
 				params.push(toolResultMsg);
 
 				if (compat.deferredToolsMode === "kimi") {
-					for (const name of toolMsg.addedToolNames ?? []) {
-						deferredToolNames.add(name);
+					for (const tool of resolveMessageToolLoadout(toolMsg, (name) => toolCatalog.get(name)).added) {
+						if (loadedDeferredToolNames.has(tool.name)) continue;
+						loadedDeferredToolNames.add(tool.name);
+						deferredTools.set(tool.name, tool);
 					}
 				}
 
@@ -1438,16 +1462,13 @@ export function convertMessages(
 				lastRole = "toolResult";
 			}
 
-			if (deferredToolNames.size > 0) {
-				const deferredTools = getToolsByName(context.tools, deferredToolNames);
-				if (deferredTools.length > 0) {
-					const kimiToolMessage: KimiToolSystemMessageParam = {
-						role: "system",
-						tools: convertTools(deferredTools, compat),
-					};
-					// Kimi accepts a system message with tools but omits the standard content field.
-					params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
-				}
+			if (deferredTools.size > 0) {
+				const kimiToolMessage: KimiToolSystemMessageParam = {
+					role: "system",
+					tools: convertTools([...deferredTools.values()], compat),
+				};
+				// Kimi accepts a system message with tools but omits the standard content field.
+				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
 			}
 			continue;
 		}

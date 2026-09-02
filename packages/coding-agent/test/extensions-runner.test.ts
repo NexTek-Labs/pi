@@ -767,14 +767,10 @@ describe("ExtensionRunner", () => {
 
 			const options = { customPrompt: "base", cwd: tempDir };
 			const basePrompt = buildSystemPrompt(options);
-			const chained = await runner.emitBeforeAgentStart("hello", undefined, basePrompt, options);
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, options);
 
 			expect(errors).toEqual([]);
-
-			expect(chained).toEqual({
-				messages: undefined,
-				systemPrompt: `${basePrompt}\nfirst\nsecond`,
-			});
+			expect(buildSystemPrompt(chained.systemPromptOptions)).toBe(`${basePrompt}\nfirst\nsecond`);
 		});
 
 		it("renders mutable system prompt options for later handlers", async () => {
@@ -806,14 +802,12 @@ describe("ExtensionRunner", () => {
 			runner.bindCore(extensionActions, extensionContextActions);
 
 			const options = { cwd: tempDir };
-			const basePrompt = buildSystemPrompt(options);
-			const chained = await runner.emitBeforeAgentStart("hello", undefined, basePrompt, options);
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, options);
 
 			expect(errors).toEqual([]);
-			expect(chained?.systemPrompt).toContain("- First mutable guideline.");
-			expect(chained?.systemPrompt).toContain(
-				"<plan_mode>\nDo not modify files.\n\nAsk before leaving plan mode.\n</plan_mode>",
-			);
+			const prompt = buildSystemPrompt(chained.systemPromptOptions);
+			expect(prompt).toContain("- First mutable guideline.");
+			expect(prompt).toContain("<plan_mode>\nDo not modify files.\n\nAsk before leaving plan mode.\n</plan_mode>");
 		});
 	});
 

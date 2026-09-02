@@ -529,7 +529,7 @@ pi.on("session_shutdown", async (event, ctx) => {
 
 #### before_agent_start
 
-Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt.
+Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt and active tool loadout.
 
 ```typescript
 pi.on("before_agent_start", async (event, ctx) => {
@@ -540,8 +540,9 @@ pi.on("before_agent_start", async (event, ctx) => {
   // event.systemPromptOptions - mutable structured options used to build the prompt
   //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
   //   .forceSystemPrompt - full replacement returned by an earlier handler
-  //   .selectedTools - tools currently active in the prompt
+  //   .selectedTools - tools active in both the prompt and executable loadout
   //   .toolSnippets - one-line descriptions for each tool
+  //   .toolGuidelines - guideline bullets contributed by each tool
   //   .promptGuidelines - custom guideline bullets
   //   .appendSystemPrompt - text from --append-system-prompt flags
   //   .sections - custom XML-wrapped sections keyed by tag name
@@ -551,6 +552,7 @@ pi.on("before_agent_start", async (event, ctx) => {
   // Collection fields are always initialized. Mutations are visible to later handlers.
   event.systemPromptOptions.promptGuidelines.push("Keep reviews focused.");
   event.systemPromptOptions.sections.review_mode = "Review changes carefully.";
+  event.systemPromptOptions.selectedTools = ["read", "grep"];
 
   return {
     // Inject a persistent message (stored in session, sent to LLM)
@@ -565,7 +567,7 @@ pi.on("before_agent_start", async (event, ctx) => {
 });
 ```
 
-The `systemPromptOptions` field is a mutable per-run clone of the structured data Pi uses to build the system prompt. Collection fields are always initialized, and later handlers observe mutations made by earlier handlers through both `event.systemPromptOptions` and the lazily rendered `event.systemPrompt`/`ctx.getSystemPrompt()`. Custom `sections` are rendered at the end of the prompt in insertion order as `<section_name>content</section_name>`; section names must match `^[a-z][a-z0-9_-]*$`.
+The `systemPromptOptions` field contains the mutable structured data Pi uses to prepare the run. `selectedTools` is authoritative for both prompt rendering and the executable tool loadout. Collection fields are always initialized, and later handlers observe mutations made by earlier handlers through both `event.systemPromptOptions` and the lazily rendered `event.systemPrompt`/`ctx.getSystemPrompt()`. Custom `sections` are rendered at the end of the prompt in insertion order as `<section_name>content</section_name>`; section names must match `^[a-z][a-z0-9_-]*$`.
 
 Returning `systemPrompt` remains the full-replacement escape hatch. Pi stores it as `forceSystemPrompt` for the rest of the handler chain, so ordinary option mutations no longer affect rendering unless a later handler clears that field.
 

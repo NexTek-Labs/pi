@@ -418,6 +418,24 @@ export interface DeferredHandle {
 	data?: JsonValue;
 }
 
+export interface ToolLoadoutContent {
+	type: "toolLoadout";
+	/** Complete provider-neutral definitions in stable declaration order. */
+	tools: Tool[];
+	/** Complete provider-neutral definitions that become available at this point. */
+	added: Tool[];
+	/** Complete provider-neutral definitions that stop being available at this point. */
+	removed: Tool[];
+}
+
+export interface SystemMessage {
+	role: "system";
+	content: string | (TextContent | ToolLoadoutContent)[];
+	/** Complete effective system prompt after this update, used for hard provider fallback. */
+	systemPrompt?: string;
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -464,7 +482,7 @@ export interface ToolResultMessage<TDetails = any> {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+export type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage;
 
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;

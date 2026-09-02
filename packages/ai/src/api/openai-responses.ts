@@ -22,6 +22,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { getSystemMessageToolLoadout, hardFallbackSystemMessages } from "../utils/system-messages.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -275,8 +276,14 @@ function buildParams(
 		: compat.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
-	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
+	const hasUnsupportedToolAddition =
+		deferredToolsMode === undefined &&
+		context.messages.some(
+			(message) => message.role === "system" && getSystemMessageToolLoadout(message).added.length > 0,
+		);
+	const requestContext = hasUnsupportedToolAddition ? hardFallbackSystemMessages(context) : context;
+	const toolPlacement = splitDeferredTools(requestContext, deferredToolsMode !== undefined);
+	const messages = convertResponsesMessages(model, requestContext, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
 		deferredToolsMode,
