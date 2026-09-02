@@ -2,13 +2,9 @@
 
 ## [Unreleased]
 
-### Breaking Changes
+### Fixed
 
-- Changed `BuildSystemPromptOptions` collection fields to always be initialized. `before_agent_start` handlers can now mutate their per-run options in place, with later handlers observing the lazily rendered prompt.
-
-### Added
-
-- Added composable XML-wrapped `sections` and a `forceSystemPrompt` full-replacement escape hatch to system prompt options.
+- Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
 
 ## [0.84.4] - 2026-08-28
 
