@@ -47,9 +47,9 @@ import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	getSystemMessageText,
-	getSystemMessageTools,
+	getSystemMessageToolChange,
 	hardFallbackSystemMessages,
-	resolveMessageToolLoadout,
+	resolveMessageToolChange,
 } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
@@ -102,7 +102,7 @@ function hasToolHistory(messages: Message[]): boolean {
 function getDeferredToolNames(messages: Message[]): Set<string> {
 	const names = new Set<string>();
 	for (const message of messages) {
-		for (const name of resolveMessageToolLoadout(message).names) names.add(name);
+		for (const name of resolveMessageToolChange(message).addedNames) names.add(name);
 	}
 	return names;
 }
@@ -794,9 +794,11 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const hasUnsupportedToolChanges =
-		compat.deferredToolsMode !== "kimi" &&
-		context.messages.some((message) => message.role === "system" && getSystemMessageTools(message).length > 0);
+	const hasUnsupportedToolChanges = context.messages.some((message) => {
+		if (message.role !== "system") return false;
+		const change = getSystemMessageToolChange(message);
+		return change.removed.length > 0 || (change.added.length > 0 && compat.deferredToolsMode !== "kimi");
+	});
 	const requestContext = hasUnsupportedToolChanges ? hardFallbackSystemMessages(context) : context;
 	const messages = convertMessages(model, requestContext, compat, { grammarToolInputProperties });
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
@@ -1229,7 +1231,7 @@ export function convertMessages(
 		}
 
 		if (msg.role === "system") {
-			const addedTools = resolveMessageToolLoadout(msg).tools.filter((tool) => {
+			const addedTools = resolveMessageToolChange(msg).added.filter((tool) => {
 				if (loadedDeferredToolNames.has(tool.name)) return false;
 				loadedDeferredToolNames.add(tool.name);
 				return true;
@@ -1422,7 +1424,7 @@ export function convertMessages(
 				params.push(toolResultMsg);
 
 				if (compat.deferredToolsMode === "kimi") {
-					for (const tool of resolveMessageToolLoadout(toolMsg, (name) => toolCatalog.get(name)).tools) {
+					for (const tool of resolveMessageToolChange(toolMsg, (name) => toolCatalog.get(name)).added) {
 						if (loadedDeferredToolNames.has(tool.name)) continue;
 						loadedDeferredToolNames.add(tool.name);
 						deferredTools.set(tool.name, tool);

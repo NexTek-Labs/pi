@@ -1,5 +1,5 @@
 import type { Context, Tool } from "../types.ts";
-import { resolveMessageToolLoadout } from "./system-messages.ts";
+import { resolveMessageToolChange } from "./system-messages.ts";
 
 type ToolNameNormalizer = (name: string) => string;
 
@@ -19,9 +19,8 @@ export function splitDeferredTools(
 	const usedNames = new Set<string>();
 	for (const message of context.messages) {
 		if (message.role === "system" || message.role === "toolResult") {
-			const loadout = resolveMessageToolLoadout(message, (name) => uniqueTools.get(normalizeName(name)));
-			for (const tool of loadout.tools) uniqueTools.set(normalizeName(tool.name), tool);
-			for (const name of loadout.names) {
+			const change = resolveMessageToolChange(message, (name) => uniqueTools.get(normalizeName(name)));
+			for (const name of change.addedNames) {
 				const normalizedName = normalizeName(name);
 				if (!usedNames.has(normalizedName)) deferredNames.add(normalizedName);
 			}

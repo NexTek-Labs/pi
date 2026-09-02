@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import type { Api, Model, SystemMessage, TextContent, Tool, ToolLoadoutContent } from "@earendil-works/pi-ai/compat";
+import type { Api, Model, SystemMessage, Tool } from "@earendil-works/pi-ai/compat";
 import { getContextUpdateCapabilities } from "@earendil-works/pi-ai/compat";
 import {
 	type BuildSystemPromptOptions,
@@ -24,7 +24,8 @@ export type PreparedModelContextUpdate =
 			type: "incremental";
 			state: ModelContextState;
 			promptText?: string;
-			addedTools: Tool[];
+			toolsAdded: Tool[];
+			toolsRemoved: Tool[];
 	  };
 
 /** Convert an executable agent tool into the provider-independent declaration stored in prompt updates. */
@@ -63,8 +64,8 @@ export function prepareModelContextUpdate(input: {
 		previous.prompt.effective === effective
 			? ({ type: "unchanged" } as const)
 			: diffSystemPrompts(previous.prompt.pieces, pieces);
-	const added = [...tools].filter(([name]) => !previous.tools.has(name)).map(([, tool]) => tool);
-	const hasRemovedTools = [...previous.tools.keys()].some((name) => !tools.has(name));
+	const toolsAdded = [...tools].filter(([name]) => !previous.tools.has(name)).map(([, tool]) => tool);
+	const toolsRemoved = [...previous.tools].filter(([name]) => !tools.has(name)).map(([, tool]) => tool);
 	const declarationChanged = [...tools].some(([name, tool]) => {
 		const previousTool = previous.tools.get(name);
 		return previousTool !== undefined && !toolDeclarationsEqual(previousTool, tool);
@@ -72,15 +73,17 @@ export function prepareModelContextUpdate(input: {
 	const previousNames = [...previous.tools.keys()];
 	const currentNames = [...tools.keys()];
 	const declarationOrderChanged =
-		added.length === 0 && !hasRemovedTools && previousNames.some((name, index) => name !== currentNames[index]);
+		toolsAdded.length === 0 &&
+		toolsRemoved.length === 0 &&
+		previousNames.some((name, index) => name !== currentNames[index]);
 	const requiresReplacement =
 		promptDiff.type === "replace" ||
 		(options.forceSystemPrompt !== undefined && promptDiff.type !== "unchanged") ||
 		(promptDiff.type === "update" && capabilities.systemMessages === "none") ||
 		declarationChanged ||
 		declarationOrderChanged ||
-		hasRemovedTools ||
-		(added.length > 0 && capabilities.toolAddition === "none");
+		(toolsAdded.length > 0 && capabilities.toolAddition === "none") ||
+		(toolsRemoved.length > 0 && capabilities.toolRemoval === "none");
 
 	if (requiresReplacement) {
 		return {
@@ -89,7 +92,7 @@ export function prepareModelContextUpdate(input: {
 		};
 	}
 
-	if (promptDiff.type === "unchanged" && added.length === 0) {
+	if (promptDiff.type === "unchanged" && toolsAdded.length === 0 && toolsRemoved.length === 0) {
 		return {
 			type: "unchanged",
 			state: { prompt: { pieces, effective, baseline: previous.prompt.baseline }, tools },
@@ -104,7 +107,8 @@ export function prepareModelContextUpdate(input: {
 		type: "incremental",
 		state,
 		promptText: promptDiff.type === "update" ? promptDiff.text : undefined,
-		addedTools: added,
+		toolsAdded,
+		toolsRemoved,
 	};
 }
 
@@ -112,18 +116,22 @@ export function prepareModelContextUpdate(input: {
 export function createSystemPromptUpdateMessage(
 	update: Extract<PreparedModelContextUpdate, { type: "incremental" }>,
 ): SystemMessage {
-	const content: Array<TextContent | ToolLoadoutContent> = [];
 	const text = update.promptText ? [update.promptText] : [];
-	if (update.addedTools.length > 0) {
-		content.push({ type: "toolLoadout", tools: update.addedTools });
+	if (update.toolsAdded.length > 0) {
 		text.push(
-			`The following tools are now available and may be used: ${update.addedTools.map((tool) => tool.name).join(", ")}.`,
+			`The following tools are now available and may be used: ${update.toolsAdded.map((tool) => tool.name).join(", ")}.`,
 		);
 	}
-	content.push({ type: "text", text: text.join("\n\n") });
+	if (update.toolsRemoved.length > 0) {
+		text.push(
+			`The following tools are no longer available. Do not call them; such calls will be rejected: ${update.toolsRemoved.map((tool) => tool.name).join(", ")}.`,
+		);
+	}
 	return {
 		role: "system",
-		content,
+		content: text.join("\n\n"),
+		toolsAdded: update.toolsAdded.length > 0 ? update.toolsAdded : undefined,
+		toolsRemoved: update.toolsRemoved.length > 0 ? update.toolsRemoved : undefined,
 		timestamp: Date.now(),
 	};
 }

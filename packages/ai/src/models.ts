@@ -878,21 +878,23 @@ export function hasApi<TApi extends Api>(model: Model<Api>, api: TApi): model is
 const NO_CONTEXT_UPDATES = {
 	systemMessages: "none",
 	toolAddition: "none",
+	toolRemoval: "none",
 } as const;
 
 /** Resolve the chronological context updates supported by a model transport. */
 export function getContextUpdateCapabilities(model: Model<Api> | undefined) {
 	if (!model) return NO_CONTEXT_UPDATES;
 	if (model.api === "faux" || model.api.startsWith("faux:")) {
-		return { systemMessages: "native", toolAddition: "native" } as const;
+		return { systemMessages: "native", toolAddition: "native", toolRemoval: "native" } as const;
 	}
 	if (hasApi(model, "mistral-conversations") || hasApi(model, "azure-openai-responses")) {
-		return { systemMessages: "native", toolAddition: "none" } as const;
+		return { systemMessages: "native", toolAddition: "none", toolRemoval: "none" } as const;
 	}
 	if (hasApi(model, "openai-completions")) {
 		return {
 			systemMessages: "native",
 			toolAddition: model.compat?.deferredToolsMode === "kimi" ? "native" : "none",
+			toolRemoval: "none",
 		} as const;
 	}
 	if (hasApi(model, "openai-responses") || hasApi(model, "openai-codex-responses")) {
@@ -902,6 +904,7 @@ export function getContextUpdateCapabilities(model: Model<Api> | undefined) {
 				model.compat?.supportsAdditionalTools === true || model.compat?.supportsToolSearch === true
 					? "native"
 					: "none",
+			toolRemoval: model.compat?.supportsAdditionalTools === true ? "native" : "none",
 		} as const;
 	}
 	return NO_CONTEXT_UPDATES;

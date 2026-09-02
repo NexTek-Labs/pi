@@ -37,7 +37,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { hardFallbackSystemMessages, resolveMessageToolLoadout } from "../utils/system-messages.ts";
+import { hardFallbackSystemMessages, resolveMessageToolChange } from "../utils/system-messages.ts";
 
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -505,6 +505,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	options?: AnthropicOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	// Anthropic tool_reference blocks can only add deferred tools at tool-result boundaries;
+	// first-class system updates and removals require a complete request checkpoint.
 	const requestContext = hardFallbackSystemMessages(context);
 
 	(async () => {
@@ -1127,7 +1129,7 @@ function convertToolResult(
 	normalizeToolName: (name: string) => string,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
-	for (const name of resolveMessageToolLoadout(msg).names) {
+	for (const name of resolveMessageToolChange(msg).addedNames) {
 		const normalizedName = normalizeToolName(name);
 		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
 		loadedToolNames.add(normalizedName);

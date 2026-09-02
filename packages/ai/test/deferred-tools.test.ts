@@ -48,7 +48,7 @@ interface OpenAIToolSearchOutput {
 interface OpenAIAdditionalTools {
 	type: "additional_tools";
 	role: "developer";
-	tools: Array<{ type: string; name: string; defer_loading?: boolean }>;
+	tools: Array<{ type: string; name: string; description?: string; defer_loading?: boolean }>;
 }
 
 interface OpenAISystemMessage {
@@ -67,6 +67,12 @@ interface OpenAIPayload {
 		| OpenAIToolSearchOutput
 		| { type?: string; name?: string }
 	>;
+}
+
+type OpenAIInputItem = NonNullable<OpenAIPayload["input"]>[number];
+
+function isOpenAIAdditionalTools(item: OpenAIInputItem): item is OpenAIAdditionalTools {
+	return item.type === "additional_tools" && "tools" in item;
 }
 
 interface KimiTool {
@@ -189,6 +195,12 @@ function findAnthropicToolResult(payload: AnthropicPayload): AnthropicContentBlo
 
 function openAIToolNames(payload: OpenAIPayload): string[] {
 	return (payload.tools ?? []).map((tool) => tool.name ?? tool.function?.name ?? "");
+}
+
+function additionalToolSnapshots(payload: OpenAIPayload): string[][] {
+	return (payload.input ?? []).flatMap((item) =>
+		isOpenAIAdditionalTools(item) ? [item.tools.map((tool) => tool.name)] : [],
+	);
 }
 
 function makeCodexToken(): string {
@@ -359,7 +371,8 @@ describe("deferred tools", () => {
 		const context = makeContext([baseTool, lateTool]);
 		context.messages.splice(3, 0, {
 			role: "system",
-			content: [{ type: "toolLoadout", tools: [lateTool] }],
+			content: "",
+			toolsAdded: [lateTool],
 			timestamp: 4,
 		});
 		const payload = await capturePayload<KimiPayload>(makeKimiModel("kimi"), context);
@@ -444,27 +457,92 @@ describe("deferred tools", () => {
 				makeUserMessage(1),
 				{
 					role: "system",
-					content: [
-						{ type: "toolLoadout", tools: [lateTool] },
-						{ type: "text", text: "late_tool is now available" },
-					],
+					content: [{ type: "text", text: "late_tool is now available" }],
+					toolsAdded: [lateTool],
 					timestamp: 2,
 				},
 			],
 			tools: [makeTool("base_tool"), lateTool],
 		};
 		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
-		const additionalTools = payload.input?.find(
-			(item): item is OpenAIAdditionalTools => item.type === "additional_tools",
-		);
+		const additionalTools = payload.input
+			?.filter((item): item is OpenAIAdditionalTools => item.type === "additional_tools")
+			.at(-1);
 		const instructionMessage = payload.input?.find(
 			(item): item is OpenAISystemMessage =>
 				"role" in item && (item.role === "system" || item.role === "developer") && "content" in item,
 		);
 
-		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
-		expect(additionalTools?.tools).toMatchObject([{ type: "function", name: "late_tool" }]);
+		expect(openAIToolNames(payload)).toEqual([]);
+		expect(additionalToolSnapshots(payload)).toEqual([["base_tool"], ["base_tool", "late_tool"]]);
+		expect(additionalTools?.tools).toMatchObject([
+			{ type: "function", name: "base_tool" },
+			{ type: "function", name: "late_tool" },
+		]);
 		expect(instructionMessage).toMatchObject({ role: "developer", content: "late_tool is now available" });
+	});
+
+	it("replaces the OpenAI Responses tool snapshot on removal", async () => {
+		const removedTool = makeTool("removed_tool");
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: "removed_tool is no longer available",
+					toolsRemoved: [removedTool],
+					timestamp: 2,
+				},
+			],
+			tools: [makeTool("base_tool")],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
+
+		expect(openAIToolNames(payload)).toEqual([]);
+		expect(additionalToolSnapshots(payload)).toEqual([["base_tool", "removed_tool"], ["base_tool"]]);
+		expect(payload.input).toContainEqual(
+			expect.objectContaining({ role: "developer", content: "removed_tool is no longer available" }),
+		);
+	});
+
+	it("reconstructs empty and re-added OpenAI Responses tool snapshots", async () => {
+		const oldTool = { ...makeTool("changing_tool"), description: "old declaration" };
+		const newTool = { ...makeTool("changing_tool"), description: "new declaration" };
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: "changing_tool was removed",
+					toolsRemoved: [oldTool],
+					timestamp: 2,
+				},
+				{
+					role: "system",
+					content: "changing_tool was restored",
+					toolsAdded: [newTool],
+					timestamp: 3,
+				},
+			],
+			tools: [newTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
+		const snapshots = (payload.input ?? []).flatMap((item, index) =>
+			isOpenAIAdditionalTools(item) ? [{ index, item }] : [],
+		);
+		const removedTextIndex = (payload.input ?? []).findIndex(
+			(item) => "content" in item && item.content === "changing_tool was removed",
+		);
+		const restoredTextIndex = (payload.input ?? []).findIndex(
+			(item) => "content" in item && item.content === "changing_tool was restored",
+		);
+
+		expect(openAIToolNames(payload)).toEqual([]);
+		expect(additionalToolSnapshots(payload)).toEqual([["changing_tool"], [], ["changing_tool"]]);
+		expect(snapshots[0]?.item.tools[0]?.description).toBe("old declaration");
+		expect(snapshots[2]?.item.tools[0]?.description).toBe("new declaration");
+		expect(snapshots[1]?.index).toBeLessThan(removedTextIndex);
+		expect(snapshots[2]?.index).toBeLessThan(restoredTextIndex);
 	});
 
 	it("hard-falls back when an OpenAI Responses model cannot add tools", async () => {
@@ -477,10 +555,8 @@ describe("deferred tools", () => {
 				makeUserMessage(1),
 				{
 					role: "system",
-					content: [
-						{ type: "toolLoadout", tools: [lateTool] },
-						{ type: "text", text: "late_tool is now available" },
-					],
+					content: [{ type: "text", text: "late_tool is now available" }],
+					toolsAdded: [lateTool],
 					timestamp: 2,
 				},
 			],
@@ -500,14 +576,18 @@ describe("deferred tools", () => {
 	it("loads an OpenAI Responses tool through additional_tools", async () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
 		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
-		const additionalTools = payload.input?.find(
+		const additionalTools = payload.input?.filter(
 			(item): item is OpenAIAdditionalTools => item.type === "additional_tools",
 		);
 
-		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
-		expect(additionalTools).toMatchObject({ role: "developer" });
-		expect(additionalTools?.tools).toMatchObject([{ type: "function", name: "late_tool" }]);
-		expect(additionalTools?.tools.every((tool) => tool.defer_loading === undefined)).toBe(true);
+		expect(openAIToolNames(payload)).toEqual([]);
+		expect(additionalToolSnapshots(payload)).toEqual([["base_tool"], ["base_tool", "late_tool"]]);
+		expect(additionalTools?.at(-1)).toMatchObject({ role: "developer" });
+		expect(additionalTools?.at(-1)?.tools).toMatchObject([
+			{ type: "function", name: "base_tool" },
+			{ type: "function", name: "late_tool" },
+		]);
+		expect(additionalTools?.at(-1)?.tools.every((tool) => tool.defer_loading === undefined)).toBe(true);
 		expect(payload.input?.some((item) => item.type === "tool_search_call")).toBe(false);
 		expect(payload.input?.some((item) => item.type === "tool_search_output")).toBe(false);
 	});
@@ -535,9 +615,10 @@ describe("deferred tools", () => {
 			(item) => item.type === "function_call" && item.name === "late_tool",
 		);
 
-		expect(additionalToolIndexes).toHaveLength(1);
-		expect(additionalToolIndexes[0]).toBeLessThan(lateCallIndex);
-		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
+		expect(additionalToolIndexes).toHaveLength(2);
+		expect(additionalToolIndexes[1]).toBeLessThan(lateCallIndex);
+		expect(additionalToolSnapshots(payload)).toEqual([["base_tool"], ["base_tool", "late_tool"]]);
+		expect(openAIToolNames(payload)).toEqual([]);
 	});
 
 	it("falls back to client tool search when additional_tools is unsupported", async () => {
@@ -558,6 +639,35 @@ describe("deferred tools", () => {
 		expect(searchOutput?.call_id).toBe(searchCall?.call_id);
 		expect(searchOutput?.tools).toMatchObject([{ type: "function", name: "late_tool", defer_loading: true }]);
 		expect(payload.input?.some((item) => item.type === "additional_tools")).toBe(false);
+	});
+
+	it("hard-falls back from tool search when tools are removed", async () => {
+		const model: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "openai-proxy",
+			compat: { supportsAdditionalTools: false, supportsToolSearch: true },
+		};
+		const context: Context = {
+			systemPrompt: "old prompt",
+			effectiveSystemPrompt: "current prompt",
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: "removed_tool is no longer available",
+					toolsRemoved: [makeTool("removed_tool")],
+					timestamp: 2,
+				},
+			],
+			tools: [makeTool("base_tool")],
+		};
+		const payload = await capturePayload<OpenAIPayload>(model, context);
+
+		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
+		expect(payload.input?.some((item) => item.type === "tool_search_output")).toBe(false);
+		expect(
+			payload.input?.some((item) => "content" in item && item.content === "removed_tool is no longer available"),
+		).toBe(false);
 	});
 
 	it.each(["gpt-5.2", "gpt-5.4-nano", "gpt-5.5-pro"] as const)(
@@ -584,7 +694,7 @@ describe("deferred tools", () => {
 		expect(payload.input?.some((item) => item.type === "tool_search_output")).toBe(false);
 	});
 
-	it("selects additional tools, tool search, or top-level tools for Codex models", async () => {
+	it("uses additional_tools snapshots for built-in Codex models", async () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
 		const additionalTools = await capturePayload<OpenAIPayload>(
 			getModel("openai-codex", "gpt-5.6-sol"),
@@ -602,14 +712,11 @@ describe("deferred tools", () => {
 			makeCodexToken(),
 		);
 
-		expect(openAIToolNames(additionalTools)).toEqual(["base_tool"]);
-		expect(additionalTools.input?.some((item) => item.type === "additional_tools")).toBe(true);
-		expect(additionalTools.input?.some((item) => item.type === "tool_search_output")).toBe(false);
-		expect(openAIToolNames(toolSearch)).toEqual(["base_tool"]);
-		expect(toolSearch.input?.some((item) => item.type === "tool_search_output")).toBe(true);
-		expect(openAIToolNames(topLevel)).toEqual(["base_tool", "late_tool"]);
-		expect(topLevel.input?.some((item) => item.type === "additional_tools")).toBe(false);
-		expect(topLevel.input?.some((item) => item.type === "tool_search_output")).toBe(false);
+		for (const payload of [additionalTools, toolSearch, topLevel]) {
+			expect(openAIToolNames(payload)).toEqual([]);
+			expect(additionalToolSnapshots(payload)).toEqual([["base_tool"], ["base_tool", "late_tool"]]);
+			expect(payload.input?.some((item) => item.type === "tool_search_output")).toBe(false);
+		}
 	});
 
 	it("leaves providers without deferred loading unchanged", async () => {
@@ -644,7 +751,8 @@ describe("deferred tools", () => {
 				makeToolResult(["late_tool"]),
 				{
 					role: "system",
-					content: [{ type: "toolLoadout", tools: [lateTool] }],
+					content: "",
+					toolsAdded: [lateTool],
 					timestamp: 5,
 				},
 			],

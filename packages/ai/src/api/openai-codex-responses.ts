@@ -18,6 +18,7 @@ import type {
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
+	Tool,
 	Usage,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
@@ -32,7 +33,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { getSystemMessageTools, hardFallbackSystemMessages } from "../utils/system-messages.ts";
+import { getSystemMessageToolChange, hardFallbackSystemMessages } from "../utils/system-messages.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -534,11 +535,19 @@ function buildRequestBody(
 		: model.compat?.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const hasUnsupportedToolAddition =
-		deferredToolsMode === undefined &&
-		context.messages.some((message) => message.role === "system" && getSystemMessageTools(message).length > 0);
-	const requestContext = hasUnsupportedToolAddition ? hardFallbackSystemMessages(context) : context;
-	const toolPlacement = splitDeferredTools(requestContext, deferredToolsMode !== undefined);
+	const hasUnsupportedToolChange = context.messages.some((message) => {
+		if (message.role !== "system") return false;
+		const change = getSystemMessageToolChange(message);
+		return (
+			(change.added.length > 0 && deferredToolsMode === undefined) ||
+			(change.removed.length > 0 && deferredToolsMode !== "additional-tools")
+		);
+	});
+	const requestContext = hasUnsupportedToolChange ? hardFallbackSystemMessages(context) : context;
+	const toolPlacement =
+		deferredToolsMode === "additional-tools"
+			? { immediate: [], deferred: new Map<string, Tool>() }
+			: splitDeferredTools(requestContext, deferredToolsMode === "tool-search");
 	const messages = convertResponsesMessages(model, requestContext, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,

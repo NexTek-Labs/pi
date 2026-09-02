@@ -269,13 +269,11 @@ export function estimateTokens(message: AgentMessage): number {
 	switch (message.role) {
 		case "system": {
 			chars =
-				typeof message.content === "string"
+				(typeof message.content === "string"
 					? message.content.length
-					: message.content.reduce(
-							(total, block) =>
-								total + (block.type === "text" ? block.text.length : JSON.stringify(block.tools).length),
-							0,
-						);
+					: message.content.reduce((total, block) => total + block.text.length, 0)) +
+				JSON.stringify(message.toolsAdded ?? []).length +
+				JSON.stringify(message.toolsRemoved ?? []).length;
 			return Math.ceil(chars / 4);
 		}
 		case "user": {

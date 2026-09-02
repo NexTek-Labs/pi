@@ -1,6 +1,9 @@
-import { type Context, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { type Context, fauxAssistantMessage, type Tool } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, test } from "vitest";
+import { normalizeBuildSystemPromptOptions } from "../src/core/system-prompt.ts";
+import { prepareModelContextUpdate } from "../src/core/system-prompt-updates.ts";
 import type { ExtensionFactory } from "../src/index.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
@@ -174,10 +177,7 @@ describe("AgentSession system prompt updates", () => {
 			(context) => {
 				nextTools = context.tools?.map((tool) => tool.name);
 				nextHasLoadout = context.messages.some(
-					(message) =>
-						message.role === "system" &&
-						typeof message.content !== "string" &&
-						message.content.some((block) => block.type === "toolLoadout"),
+					(message) => message.role === "system" && (message.toolsAdded?.length ?? 0) > 0,
 				);
 				return fauxAssistantMessage("next");
 			},
@@ -193,7 +193,7 @@ describe("AgentSession system prompt updates", () => {
 		expect(nextHasLoadout).toBe(false);
 	});
 
-	test("records tool additions and falls back to a snapshot for removals", async () => {
+	test("records tool additions and removals as system message deltas", async () => {
 		harness = await createHarness({
 			initialActiveToolNames: ["first_tool"],
 			extensionFactories: [
@@ -219,23 +219,28 @@ describe("AgentSession system prompt updates", () => {
 			],
 		});
 
-		let loadout: string[] | undefined;
+		let added: string[] | undefined;
+		let removed: string[] | undefined;
 		let updateText = "";
-		let removalHasSystemMessage = true;
 		harness.setResponses([
 			() => fauxAssistantMessage("first"),
 			(context) => {
 				for (const message of context.messages) {
-					if (message.role !== "system" || typeof message.content === "string") continue;
-					for (const block of message.content) {
-						if (block.type === "text") updateText += block.text;
-						if (block.type === "toolLoadout") loadout = block.tools.map((tool) => tool.name);
-					}
+					if (message.role !== "system") continue;
+					updateText +=
+						typeof message.content === "string"
+							? message.content
+							: message.content.map((block) => block.text).join("\n");
+					if (message.toolsAdded) added = message.toolsAdded.map((tool) => tool.name);
 				}
 				return fauxAssistantMessage("second");
 			},
 			(context) => {
-				removalHasSystemMessage = context.messages.some((message) => message.role === "system");
+				for (const message of context.messages) {
+					if (message.role === "system" && message.toolsRemoved) {
+						removed = message.toolsRemoved.map((tool) => tool.name);
+					}
+				}
 				return fauxAssistantMessage("third");
 			},
 		]);
@@ -244,12 +249,98 @@ describe("AgentSession system prompt updates", () => {
 		await harness.session.prompt("second");
 		await harness.session.prompt("third");
 
-		expect(loadout).toEqual(["second_tool"]);
-		expect(removalHasSystemMessage).toBe(false);
+		expect(added).toEqual(["second_tool"]);
+		expect(removed).toEqual(["first_tool"]);
 		expect(updateText).toContain("second_tool prompt snippet");
 		expect(updateText).toContain("Use second_tool carefully");
 		expect(harness.session.getActiveToolNames()).toEqual(["second_tool"]);
 		const storedStates = harness.sessionManager.getEntries().filter((entry) => entry.type === "system_prompt");
 		expect(storedStates.at(-1)?.tools.map((tool) => tool.name)).toEqual(["second_tool"]);
+	});
+
+	test("uses incremental removal only for OpenAI complete tool snapshots", () => {
+		const firstTool: Tool = {
+			name: "first_tool",
+			description: "first tool",
+			parameters: Type.Object({}),
+		};
+		const secondTool: Tool = {
+			name: "second_tool",
+			description: "second tool",
+			parameters: Type.Object({}),
+		};
+		const options = normalizeBuildSystemPromptOptions({ cwd: "/tmp", customPrompt: "prompt" });
+		const snapshotModel = getModel("openai", "gpt-5.4");
+		const initial = prepareModelContextUpdate({
+			options,
+			tools: new Map([
+				[firstTool.name, firstTool],
+				[secondTool.name, secondTool],
+			]),
+			model: snapshotModel,
+		});
+		expect(initial.type).toBe("initial");
+
+		const removal = prepareModelContextUpdate({
+			options,
+			tools: new Map([[secondTool.name, secondTool]]),
+			previous: initial.state,
+			model: snapshotModel,
+		});
+		expect(removal).toMatchObject({ type: "incremental", toolsAdded: [], toolsRemoved: [firstTool] });
+
+		const toolSearchOnlyModel = {
+			...snapshotModel,
+			provider: "openai-proxy",
+			compat: { supportsAdditionalTools: false, supportsToolSearch: true },
+		};
+		const fallbackRemoval = prepareModelContextUpdate({
+			options,
+			tools: new Map([[secondTool.name, secondTool]]),
+			previous: initial.state,
+			model: toolSearchOnlyModel,
+		});
+		expect(fallbackRemoval.type).toBe("replacement");
+	});
+
+	test("uses complete-state replacement when the model cannot change tools dynamically", () => {
+		const firstTool: Tool = {
+			name: "first_tool",
+			description: "first tool",
+			parameters: Type.Object({}),
+		};
+		const secondTool: Tool = {
+			name: "second_tool",
+			description: "second tool",
+			parameters: Type.Object({}),
+		};
+		const options = normalizeBuildSystemPromptOptions({ cwd: "/tmp", customPrompt: "prompt" });
+		for (const model of [getModel("mistral", "mistral-large-latest"), getModel("anthropic", "claude-opus-4-6")]) {
+			const initial = prepareModelContextUpdate({
+				options,
+				tools: new Map([[firstTool.name, firstTool]]),
+				model,
+			});
+			expect(initial.type).toBe("initial");
+
+			const addition = prepareModelContextUpdate({
+				options,
+				tools: new Map([
+					[firstTool.name, firstTool],
+					[secondTool.name, secondTool],
+				]),
+				previous: initial.state,
+				model,
+			});
+			expect(addition.type).toBe("replacement");
+
+			const removal = prepareModelContextUpdate({
+				options,
+				tools: new Map([[secondTool.name, secondTool]]),
+				previous: addition.state,
+				model,
+			});
+			expect(removal.type).toBe("replacement");
+		}
 	});
 });

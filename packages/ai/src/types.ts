@@ -418,15 +418,13 @@ export interface DeferredHandle {
 	data?: JsonValue;
 }
 
-export interface ToolLoadoutContent {
-	type: "toolLoadout";
-	/** Complete provider-neutral definitions that become available at this point. */
-	tools: Tool[];
-}
-
 export interface SystemMessage {
 	role: "system";
-	content: string | (TextContent | ToolLoadoutContent)[];
+	content: string | TextContent[];
+	/** Complete provider-neutral definitions that become available at this point. */
+	toolsAdded?: Tool[];
+	/** Complete provider-neutral definitions that stop being available at this point. */
+	toolsRemoved?: Tool[];
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -658,7 +656,7 @@ export interface OpenAIResponsesCompat {
 	supportsStrictMode?: boolean;
 	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
-	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
+	/** Whether to send all tools through complete, message-anchored `additional_tools` snapshots instead of the top-level `tools` field. Default: false. */
 	supportsAdditionalTools?: boolean;
 	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
 	supportsToolSearch?: boolean;

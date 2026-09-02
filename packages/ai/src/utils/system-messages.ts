@@ -1,38 +1,43 @@
-import type { Context, Message, SystemMessage, TextContent, Tool } from "../types.ts";
+import type { Context, Message, SystemMessage, Tool } from "../types.ts";
+
+export interface ResolvedToolChange {
+	added: Tool[];
+	removed: Tool[];
+	addedNames: string[];
+}
 
 export function getSystemMessageText(message: SystemMessage): string {
-	if (typeof message.content === "string") return message.content;
-	return message.content
-		.filter((block): block is TextContent => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
+	return typeof message.content === "string" ? message.content : message.content.map((block) => block.text).join("\n");
 }
 
-export function getSystemMessageTools(message: SystemMessage): Tool[] {
-	if (typeof message.content === "string") return [];
-	return message.content.flatMap((block) => (block.type === "toolLoadout" ? block.tools : []));
+export function getSystemMessageToolChange(message: SystemMessage): ResolvedToolChange {
+	const added = message.toolsAdded ?? [];
+	const removed = message.toolsRemoved ?? [];
+	return {
+		added,
+		removed,
+		addedNames: added.map((tool) => tool.name),
+	};
 }
 
-/** Normalize rich system loadouts and legacy tool-result additions. */
-export function resolveMessageToolLoadout(
+/** Normalize first-class system updates and legacy tool-result additions into one chronological change. */
+export function resolveMessageToolChange(
 	message: Message,
 	resolveTool: (name: string) => Tool | undefined = () => undefined,
-) {
-	if (message.role === "system") {
-		const tools = getSystemMessageTools(message);
-		return { tools, names: tools.map((tool) => tool.name) };
-	}
+): ResolvedToolChange {
+	if (message.role === "system") return getSystemMessageToolChange(message);
 	if (message.role === "toolResult") {
-		const names = [...new Set(message.addedToolNames ?? [])];
+		const addedNames = [...new Set(message.addedToolNames ?? [])];
 		return {
-			tools: names.flatMap((name) => {
+			added: addedNames.flatMap((name) => {
 				const tool = resolveTool(name);
 				return tool ? [tool] : [];
 			}),
-			names,
+			removed: [],
+			addedNames,
 		};
 	}
-	return { tools: [], names: [] };
+	return { added: [], removed: [], addedNames: [] };
 }
 
 /** Fold transcript system updates into complete top-level state for providers without native support. */

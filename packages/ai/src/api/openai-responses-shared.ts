@@ -19,6 +19,7 @@ import type {
 	AssistantMessage,
 	Context,
 	ImageContent,
+	Message,
 	Model,
 	StopReason,
 	TextContent,
@@ -32,7 +33,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText, resolveMessageToolLoadout } from "../utils/system-messages.ts";
+import { getSystemMessageText, resolveMessageToolChange } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -132,6 +133,30 @@ export interface ConvertResponsesToolsOptions {
 	deferLoading?: boolean;
 }
 
+/** Rewind the final tool checkpoint so Responses can replay complete replacement snapshots chronologically. */
+function createAdditionalToolsState(
+	messages: readonly Message[],
+	currentTools: readonly Tool[] | undefined,
+): { tools: Map<string, Tool>; catalog: Map<string, Tool> } {
+	const catalog = new Map<string, Tool>();
+	for (const message of messages) {
+		if (message.role !== "system") continue;
+		const change = resolveMessageToolChange(message);
+		for (const tool of change.removed) catalog.set(tool.name, tool);
+		for (const tool of change.added) catalog.set(tool.name, tool);
+	}
+	for (const tool of currentTools ?? []) catalog.set(tool.name, tool);
+
+	const tools = new Map<string, Tool>();
+	for (const tool of currentTools ?? []) tools.set(tool.name, tool);
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const change = resolveMessageToolChange(messages[index], (name) => catalog.get(name));
+		for (const name of change.addedNames) tools.delete(name);
+		for (const tool of change.removed) tools.set(tool.name, tool);
+	}
+	return { tools, catalog };
+}
+
 // =============================================================================
 // Message conversion
 // =============================================================================
@@ -171,7 +196,72 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const additionalToolsState =
+		options?.deferredToolsMode === "additional-tools"
+			? createAdditionalToolsState(transformedMessages, context.tools)
+			: undefined;
+	const grammarToolInputProperties = new Map(options?.grammarToolInputProperties);
+	for (const tool of additionalToolsState?.catalog.values() ?? []) {
+		const grammar = resolveGrammarConstrainedSampling(
+			tool,
+			options?.toolOptions?.supportsOpenAIGrammarTools ?? false,
+		);
+		if (grammar) grammarToolInputProperties.set(tool.name, grammar.inputProperty);
+	}
 
+	const appendAdditionalToolsSnapshot = (): void => {
+		if (!additionalToolsState) return;
+		messages.push({
+			type: "additional_tools",
+			role: "developer",
+			tools: convertResponsesTools([...additionalToolsState.tools.values()], options?.toolOptions),
+		} satisfies ResponseInputItem);
+	};
+	const applyAdditionalToolsChange = (message: Message): boolean => {
+		if (!additionalToolsState) return false;
+		const change = resolveMessageToolChange(message, (name) => additionalToolsState.catalog.get(name));
+		let changed = false;
+		for (const tool of change.removed) {
+			changed = additionalToolsState.tools.delete(tool.name) || changed;
+		}
+		for (const tool of change.added) {
+			const previous = additionalToolsState.tools.get(tool.name);
+			if (previous === undefined || JSON.stringify(previous) !== JSON.stringify(tool)) {
+				additionalToolsState.tools.set(tool.name, tool);
+				changed = true;
+			}
+		}
+		return changed;
+	};
+	const appendToolSearchAdditions = (tools: Tool[], seed: string): void => {
+		const added = tools.filter((tool) => {
+			if (loadedToolNames.has(tool.name)) return false;
+			loadedToolNames.add(tool.name);
+			return true;
+		});
+		if (added.length === 0) return;
+		if (options?.deferredToolsMode !== "tool-search") {
+			throw new Error("OpenAI Responses does not support transcript-anchored tool addition");
+		}
+		const names = added.map((tool) => tool.name);
+		const searchCallId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
+		messages.push({
+			type: "tool_search_call",
+			call_id: searchCallId,
+			execution: "client",
+			status: "completed",
+			arguments: { query: names.join(" "), limit: names.length },
+		} satisfies ResponseInputItem);
+		messages.push({
+			type: "tool_search_output",
+			call_id: searchCallId,
+			execution: "client",
+			status: "completed",
+			tools: convertResponsesTools(added, { ...options.toolOptions, deferLoading: true }),
+		} satisfies ResponseToolSearchOutputItemParam);
+	};
+
+	appendAdditionalToolsSnapshot();
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
@@ -182,47 +272,14 @@ export function convertResponsesMessages<TApi extends Api>(
 		});
 	}
 
-	const appendToolLoadout = (tools: Tool[], seed: string): void => {
-		const added = tools.filter((tool) => {
-			if (loadedToolNames.has(tool.name)) return false;
-			loadedToolNames.add(tool.name);
-			return true;
-		});
-		if (added.length === 0) return;
-		if (options?.deferredToolsMode === "additional-tools") {
-			messages.push({
-				type: "additional_tools",
-				role: "developer",
-				tools: convertResponsesTools(added, options.toolOptions),
-			} satisfies ResponseInputItem);
-			return;
-		}
-		if (options?.deferredToolsMode === "tool-search") {
-			const names = added.map((tool) => tool.name);
-			const searchCallId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
-			messages.push({
-				type: "tool_search_call",
-				call_id: searchCallId,
-				execution: "client",
-				status: "completed",
-				arguments: { query: names.join(" "), limit: names.length },
-			} satisfies ResponseInputItem);
-			messages.push({
-				type: "tool_search_output",
-				call_id: searchCallId,
-				execution: "client",
-				status: "completed",
-				tools: convertResponsesTools(added, { ...options.toolOptions, deferLoading: true }),
-			} satisfies ResponseToolSearchOutputItemParam);
-			return;
-		}
-		throw new Error("OpenAI Responses does not support transcript-anchored tool addition");
-	};
-
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
 		if (msg.role === "system") {
-			appendToolLoadout(resolveMessageToolLoadout(msg).tools, `system:${msgIndex}`);
+			if (additionalToolsState) {
+				if (applyAdditionalToolsChange(msg)) appendAdditionalToolsSnapshot();
+			} else {
+				appendToolSearchAdditions(resolveMessageToolChange(msg).added, `system:${msgIndex}`);
+			}
 			const text = getSystemMessageText(msg);
 			if (text.length > 0) {
 				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
@@ -291,7 +348,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				} else if (block.type === "toolCall") {
 					const toolCall = block as ToolCall;
 					const [callId, itemIdRaw] = toolCall.id.split("|");
-					const customInputProperty = options?.grammarToolInputProperties?.get(toolCall.name);
+					const customInputProperty = grammarToolInputProperties.get(toolCall.name);
 					let itemId: string | undefined = itemIdRaw;
 
 					// For different-model messages, set id to undefined to avoid pairing validation.
@@ -306,7 +363,10 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
-					const canReplayNamespace = isSameModel || options?.deferredTools?.has(toolCall.name) === true;
+					const canReplayNamespace =
+						isSameModel ||
+						additionalToolsState?.catalog.has(toolCall.name) === true ||
+						options?.deferredTools?.has(toolCall.name) === true;
 
 					if (customInputProperty !== undefined) {
 						output.push({
@@ -341,7 +401,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			const [callId] = msg.toolCallId.split("|");
 			const output = convertToolResultOutput(model, msg.content);
 
-			if (options?.grammarToolInputProperties?.has(msg.toolName)) {
+			if (grammarToolInputProperties.has(msg.toolName)) {
 				messages.push({
 					type: "custom_tool_call_output",
 					call_id: callId,
@@ -355,10 +415,14 @@ export function convertResponsesMessages<TApi extends Api>(
 				});
 			}
 
-			appendToolLoadout(
-				resolveMessageToolLoadout(msg, (name) => options?.deferredTools?.get(name)).tools,
-				msg.toolCallId,
-			);
+			if (additionalToolsState) {
+				if (applyAdditionalToolsChange(msg)) appendAdditionalToolsSnapshot();
+			} else {
+				appendToolSearchAdditions(
+					resolveMessageToolChange(msg, (name) => options?.deferredTools?.get(name)).added,
+					msg.toolCallId,
+				);
+			}
 		}
 		msgIndex++;
 	}
