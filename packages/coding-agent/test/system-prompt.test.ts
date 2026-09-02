@@ -112,6 +112,20 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("prompt tail", () => {
+		test("renders after cwd and custom sections", () => {
+			const prompt = buildSystemPrompt({
+				cwd: "/worktree",
+				sections: { review_mode: "Review carefully." },
+				promptTail: "\n\nTail guidance.",
+			});
+
+			expect(prompt).toContain("Current working directory: /worktree");
+			expect(prompt).toContain("<review_mode>\nReview carefully.\n</review_mode>");
+			expect(prompt.endsWith("</review_mode>\n\nTail guidance.")).toBe(true);
+		});
+	});
+
 	describe("prompt guidelines", () => {
 		test("appends promptGuidelines to default guidelines", () => {
 			const prompt = buildSystemPrompt({

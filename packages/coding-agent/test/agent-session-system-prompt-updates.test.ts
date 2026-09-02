@@ -1,6 +1,7 @@
 import { type Context, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, test } from "vitest";
+import type { ExtensionFactory } from "../src/index.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
 describe("AgentSession system prompt updates", () => {
@@ -50,15 +51,137 @@ describe("AgentSession system prompt updates", () => {
 		expect(providerSystemMessages[0]).toEqual([]);
 		expect(providerSystemMessages[1]?.[0]).toContain("<plan_mode>\nDo not modify files.\n</plan_mode>");
 		expect(providerSystemMessages[2]?.at(-1)).toContain("<plan_mode> system guidance no longer applies");
-		expect(harness.sessionManager.getEntries()).toEqual(
+		const entries = harness.sessionManager.getEntries();
+		expect(entries).toEqual(
 			expect.arrayContaining([
-				expect.objectContaining({ type: "system_prompt" }),
+				expect.objectContaining({ type: "system_prompt", prompt: expect.any(Array) }),
 				expect.objectContaining({
 					type: "message",
 					message: expect.objectContaining({ role: "system" }),
 				}),
 			]),
 		);
+		for (const entry of entries) {
+			if (entry.type === "message" && entry.message.role === "system") {
+				expect(entry.message).not.toHaveProperty("systemPrompt");
+			}
+		}
+	});
+
+	test("adds appended base instructions incrementally and resets the baseline when they are removed", async () => {
+		harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", (event) => {
+						if (event.prompt === "with append") {
+							event.systemPromptOptions.appendSystemPrompt = "shout like you mean it";
+						}
+					});
+				},
+			],
+		});
+		const contexts: Context[] = [];
+		harness.setResponses([
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("first");
+			},
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("second");
+			},
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("third");
+			},
+		]);
+
+		await harness.session.prompt("without append");
+		await harness.session.prompt("with append");
+		await harness.session.prompt("without append again");
+
+		expect(contexts[1]?.systemPrompt).toBe(contexts[0]?.systemPrompt);
+		expect(contexts[1]?.messages.some((message) => message.role === "system")).toBe(true);
+		expect(contexts[2]?.systemPrompt).toBe(contexts[0]?.systemPrompt);
+		expect(contexts[2]?.messages.some((message) => message.role === "system")).toBe(false);
+	});
+
+	test("adds legacy prompt tails incrementally and resets the baseline when removed", async () => {
+		harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", (event) =>
+						event.prompt === "append"
+							? { systemPrompt: `${event.systemPrompt}\n\nLegacy tail guidance.` }
+							: undefined,
+					);
+				},
+			],
+		});
+		const contexts: Context[] = [];
+		harness.setResponses([
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("first");
+			},
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("second");
+			},
+			(context) => {
+				contexts.push(context);
+				return fauxAssistantMessage("third");
+			},
+		]);
+
+		await harness.session.prompt("first");
+		await harness.session.prompt("append");
+		await harness.session.prompt("resume");
+
+		expect(contexts[1]?.systemPrompt).toBe(contexts[0]?.systemPrompt);
+		expect(contexts[2]?.systemPrompt).toBe(contexts[0]?.systemPrompt);
+		const updates = contexts.map((context) =>
+			context.messages.flatMap((message) => {
+				if (message.role !== "system") return [];
+				if (typeof message.content === "string") return [message.content];
+				return message.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+			}),
+		);
+		expect(updates[1]?.at(-1)).toContain("Legacy tail guidance.");
+		expect(updates[2]).toEqual([]);
+	});
+
+	test("uses persisted prompt pieces to generate an update after restart", async () => {
+		let guidance = "old guidance";
+		const createGuidanceExtension: ExtensionFactory = (pi) => {
+			pi.on("before_agent_start", (event) => {
+				event.systemPromptOptions.sections.runtime_guidance = guidance;
+			});
+		};
+		const firstHarness = await createHarness({ extensionFactories: [createGuidanceExtension] });
+		firstHarness.setResponses([fauxAssistantMessage("first")]);
+		await firstHarness.session.prompt("first");
+		const sessionManager = firstHarness.sessionManager;
+		firstHarness.cleanup();
+
+		guidance = "new guidance";
+		harness = await createHarness({ sessionManager, extensionFactories: [createGuidanceExtension] });
+		let systemMessages: string[] = [];
+		harness.setResponses([
+			(context) => {
+				systemMessages = context.messages.flatMap((message) => {
+					if (message.role !== "system") return [];
+					if (typeof message.content === "string") return [message.content];
+					return message.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+				});
+				return fauxAssistantMessage("second");
+			},
+		]);
+
+		await harness.session.prompt("second");
+
+		expect(systemMessages.at(-1)).toContain("new guidance");
+		expect(systemMessages.at(-1)).toContain("supersedes the previous");
 	});
 
 	test("uses complete-state fallback for legacy full prompt replacements", async () => {
@@ -88,6 +211,37 @@ describe("AgentSession system prompt updates", () => {
 
 		expect(contexts[1]?.systemPrompt).toBe("replacement prompt");
 		expect(contexts[1]?.messages.some((message) => message.role === "system")).toBe(false);
+	});
+
+	test("checkpoints the effective prompt after compaction", async () => {
+		harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => ({
+						compaction: {
+							summary: "compact summary",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+		});
+		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+
+		await harness.session.prompt("first");
+		await harness.session.prompt("second");
+		await harness.session.compact();
+
+		const entries = harness.sessionManager.getEntries();
+		const compactionIndex = entries.map((entry) => entry.type).lastIndexOf("compaction");
+		expect(compactionIndex).toBeGreaterThanOrEqual(0);
+		const checkpoint = entries[compactionIndex + 1];
+		expect(checkpoint?.type).toBe("system_prompt");
+		if (checkpoint?.type === "system_prompt") {
+			expect(checkpoint.prompt.map((piece) => piece.text).join("")).toBe(harness.session.systemPrompt);
+		}
 	});
 
 	test("does not commit a tool loadout when prompt validation fails", async () => {

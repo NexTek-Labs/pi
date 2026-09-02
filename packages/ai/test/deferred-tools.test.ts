@@ -484,6 +484,7 @@ describe("deferred tools", () => {
 		const lateTool = makeTool("late_tool");
 		const context: Context = {
 			systemPrompt: "old prompt",
+			effectiveSystemPrompt: "new prompt",
 			messages: [
 				makeUserMessage(1),
 				{
@@ -492,7 +493,6 @@ describe("deferred tools", () => {
 						{ type: "toolLoadout", tools: [baseTool, lateTool], added: [lateTool], removed: [] },
 						{ type: "text", text: "late_tool is now available" },
 					],
-					systemPrompt: "new prompt",
 					timestamp: 2,
 				},
 			],

@@ -39,6 +39,58 @@ describe("diffSystemPrompts", () => {
 		}
 	});
 
+	test("emits only strict line suffixes added to custom and appended base instructions", () => {
+		const previous = buildSystemPromptPieces({
+			cwd: "/tmp",
+			customPrompt: "base instructions",
+			appendSystemPrompt: "existing addition",
+		});
+		const current = buildSystemPromptPieces({
+			cwd: "/tmp",
+			customPrompt: "base instructions",
+			appendSystemPrompt: "existing addition\nnew addition",
+		});
+
+		const diff = diffSystemPrompts(previous, current);
+		expect(diff).toEqual({
+			type: "update",
+			text: "The following additional base system instructions now apply:\n\nnew addition",
+		});
+	});
+
+	test("replaces the prompt when custom or appended base instructions change non-additively", () => {
+		const base = { cwd: "/tmp", customPrompt: "base instructions", appendSystemPrompt: "existing addition" };
+		for (const current of [
+			{ ...base, customPrompt: "changed instructions" },
+			{ ...base, appendSystemPrompt: "replacement addition" },
+			{ ...base, appendSystemPrompt: "" },
+			{ ...base, appendSystemPrompt: "inserted addition\nexisting addition" },
+		]) {
+			expect(diffSystemPrompts(buildSystemPromptPieces(base), buildSystemPromptPieces(current))).toEqual({
+				type: "replace",
+			});
+		}
+	});
+
+	test("emits only strict line suffixes added to the prompt tail", () => {
+		const previous = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail" });
+		const current = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" });
+
+		expect(diffSystemPrompts(previous, current)).toEqual({
+			type: "update",
+			text: "The following additional system guidance now applies:\n\nnew tail",
+		});
+	});
+
+	test("replaces the prompt when the prompt tail changes non-additively", () => {
+		const previous = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail" });
+		for (const promptTail of ["", "\nnew tail", "\ninserted\nold tail"]) {
+			expect(diffSystemPrompts(previous, buildSystemPromptPieces({ cwd: "/tmp", promptTail }))).toEqual({
+				type: "replace",
+			});
+		}
+	});
+
 	test("renders source-specific removal guidance", () => {
 		expect(
 			diffSystemPrompts(

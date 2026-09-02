@@ -69,6 +69,7 @@ export interface HarnessOptions {
 	allowedToolNames?: string[];
 	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
+	sessionManager?: SessionManager;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
 	modelsJson?: Record<string, unknown>;
@@ -109,7 +110,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = SessionManager.inMemory();
+	const sessionManager = options.sessionManager ?? SessionManager.inMemory();
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
@@ -147,6 +148,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
 			tools: [],
+			messages: sessionManager.buildSessionContext().messages,
 		},
 		convertToLlm,
 		onPayload: async (payload) => {

@@ -544,7 +544,8 @@ pi.on("before_agent_start", async (event, ctx) => {
   //   .toolSnippets - one-line descriptions for each tool
   //   .toolGuidelines - guideline bullets contributed by each tool
   //   .promptGuidelines - custom guideline bullets
-  //   .appendSystemPrompt - text from --append-system-prompt flags
+  //   .appendSystemPrompt - configured text inserted before project context, skills, and cwd
+  //   .promptTail - text at the absolute end of the prompt
   //   .sections - custom XML-wrapped sections keyed by tag name
   //   .cwd - working directory
   //   .contextFiles - AGENTS.md files and other loaded context files
@@ -561,15 +562,17 @@ pi.on("before_agent_start", async (event, ctx) => {
       content: "Additional context for the LLM",
       display: true,
     },
-    // Replace the system prompt for this turn (chained across extensions)
+    // Append to the current prompt using the legacy chained-string pattern
     systemPrompt: event.systemPrompt + "\n\nExtra instructions for this turn...",
   };
 });
 ```
 
-The `systemPromptOptions` field contains the mutable structured data Pi uses to prepare the run. `selectedTools` is authoritative for both prompt rendering and the executable tool loadout. Collection fields are always initialized, and later handlers observe mutations made by earlier handlers through both `event.systemPromptOptions` and the lazily rendered `event.systemPrompt`/`ctx.getSystemPrompt()`. Custom `sections` are rendered at the end of the prompt in insertion order as `<section_name>content</section_name>`; section names must match `^[a-z][a-z0-9_-]*$`.
+The `systemPromptOptions` field contains the mutable structured data Pi uses to prepare the run. `selectedTools` is authoritative for both prompt rendering and the executable tool loadout. Collection fields are always initialized, and later handlers observe mutations made by earlier handlers through both `event.systemPromptOptions` and the lazily rendered `event.systemPrompt`/`ctx.getSystemPrompt()`. Custom `sections` render after the working directory in insertion order as `<section_name>content</section_name>`; section names must match `^[a-z][a-z0-9_-]*$`. `promptTail` renders after all sections. `appendSystemPrompt` retains its historical placement before project context, skills, and the working directory.
 
-Returning `systemPrompt` remains the full-replacement escape hatch. Pi stores it as `forceSystemPrompt` for the rest of the handler chain, so ordinary option mutations no longer affect rendering unless a later handler clears that field.
+When a returned `systemPrompt` starts with the current rendered prompt, Pi records only the appended suffix in `promptTail`. This preserves the common legacy pattern `systemPrompt: event.systemPrompt + "..."`. A strict line suffix added to `promptTail` can be delivered incrementally; editing or removing existing tail text resets the complete top-level prompt. Other returned `systemPrompt` values remain full replacements: Pi stores them as `forceSystemPrompt` for the rest of the handler chain, so ordinary option mutations no longer affect rendering unless a later handler clears that field.
+
+Pi treats `customPrompt` plus `appendSystemPrompt` as one logical base-instructions block. A strict line suffix added to that combined block can be delivered incrementally. Editing, inserting into, or removing existing base-instruction lines resets the complete top-level prompt.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
@@ -1128,7 +1131,7 @@ const options = ctx.getSystemPromptOptions();
 const contextPaths = options.contextFiles?.map((file) => file.path) ?? [];
 ```
 
-This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
+This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, configured appended prompt text, final prompt tail, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
 
 This reports the current base prompt inputs. It does not include per-turn `before_agent_start` chained system-prompt changes, later `context` event message mutations, or `before_provider_request` payload rewrites.
 

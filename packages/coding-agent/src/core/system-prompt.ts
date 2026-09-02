@@ -18,8 +18,10 @@ export interface BuildSystemPromptOptions {
 	toolGuidelines: Record<string, string[]>;
 	/** Additional guideline bullets appended to the default system prompt guidelines. */
 	promptGuidelines: string[];
-	/** Text appended from user configuration. */
+	/** Text appended from user configuration before project context, skills, and cwd. */
 	appendSystemPrompt: string;
+	/** Text appended at the absolute end of the rendered prompt. */
+	promptTail: string;
 	/** Additional XML-wrapped prompt sections keyed by tag name. */
 	sections: Record<string, string>;
 	/** Working directory. */
@@ -50,6 +52,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptInput)
 		),
 		promptGuidelines: [...(input.promptGuidelines ?? [])],
 		appendSystemPrompt: input.appendSystemPrompt ?? "",
+		promptTail: input.promptTail ?? "",
 		sections: { ...(input.sections ?? {}) },
 		cwd: input.cwd,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
@@ -100,6 +103,7 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 		toolGuidelines,
 		promptGuidelines,
 		appendSystemPrompt,
+		promptTail,
 		sections,
 		cwd,
 		contextFiles,
@@ -130,6 +134,7 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 			{ type: "literal", text: "\n" },
 		];
 		appendCustomSectionPieces(pieces, sections, "\n", "\n");
+		pieces.push({ type: "value", key: "promptTail", text: promptTail });
 		return pieces;
 	}
 
@@ -207,6 +212,7 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 		{ type: "value", key: "cwd", text: promptCwd },
 	];
 	appendCustomSectionPieces(pieces, sections, "\n\n", "");
+	pieces.push({ type: "value", key: "promptTail", text: promptTail });
 	return pieces;
 }
 
@@ -234,14 +240,33 @@ export function diffSystemPrompts(
 		return { type: "replace" };
 	}
 	const updates: string[] = [];
+	const baseKeys = ["customPrompt", "appendSystemPrompt"] as const;
+	const previousBaseRaw = baseKeys.map((key) => previousLayout.values.get(key) ?? "").join("");
+	const currentBaseRaw = baseKeys.map((key) => currentLayout.values.get(key) ?? "").join("");
+	if (previousBaseRaw !== currentBaseRaw) {
+		const previousBase = previousBaseRaw.trim();
+		const currentBase = currentBaseRaw.trim();
+		if (previousBase === currentBase) return { type: "replace" };
+		const addition = strictLineSuffixAddition(previousBase, currentBase);
+		if (addition === undefined) return { type: "replace" };
+		updates.push(`The following additional base system instructions now apply:\n\n${addition}`);
+	}
+
 	const keys = new Set([...previousLayout.values.keys(), ...currentLayout.values.keys()]);
 	for (const key of keys) {
+		if (key === "customPrompt" || key === "appendSystemPrompt") continue;
 		const oldRawValue = previousLayout.values.get(key) ?? "";
 		const newRawValue = currentLayout.values.get(key) ?? "";
 		if (oldRawValue === newRawValue) continue;
 		const oldValue = oldRawValue.trim();
 		const newValue = newRawValue.trim();
 		if (oldValue === newValue) return { type: "replace" };
+		if (key === "promptTail") {
+			const addition = strictLineSuffixAddition(oldValue, newValue);
+			if (addition === undefined) return { type: "replace" };
+			updates.push(`The following additional system guidance now applies:\n\n${addition}`);
+			continue;
+		}
 		updates.push(renderSystemPromptValueUpdate(key, oldValue, newValue));
 	}
 	if (updates.length === 0) return { type: "unchanged" };
@@ -283,6 +308,14 @@ function hasCompatiblePromptLayout(previous: PromptLayout, current: PromptLayout
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
 	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function strictLineSuffixAddition(previous: string, current: string): string | undefined {
+	if (previous.length === 0) return current.length > 0 ? current : undefined;
+	const prefix = `${previous}\n`;
+	if (!current.startsWith(prefix)) return undefined;
+	const addition = current.slice(prefix.length).trim();
+	return addition.length > 0 ? addition : undefined;
 }
 
 function renderSystemPromptValueUpdate(key: string, previous: string, current: string): string {

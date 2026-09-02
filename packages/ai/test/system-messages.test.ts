@@ -54,6 +54,7 @@ describe("hardFallbackSystemMessages", () => {
 	test("uses complete current state and removes incompatible replay", () => {
 		const context: Context = {
 			systemPrompt: "old",
+			effectiveSystemPrompt: "new",
 			messages: [
 				assistant,
 				{
@@ -68,7 +69,6 @@ describe("hardFallbackSystemMessages", () => {
 				{
 					role: "system",
 					content: "changed",
-					systemPrompt: "new",
 					timestamp: 3,
 				},
 			],
@@ -87,24 +87,25 @@ describe("hardFallbackSystemMessages", () => {
 		expect(fallback.messages[1]).not.toHaveProperty("addedToolNames");
 	});
 
-	test("keeps guidance appended after the latest complete prompt", () => {
+	test("appends standalone guidance when complete effective state is unavailable", () => {
 		const fallback = hardFallbackSystemMessages({
 			systemPrompt: "old",
 			messages: [
-				{ role: "system", content: "first delta", systemPrompt: "complete", timestamp: 1 },
+				{ role: "system", content: "first delta", timestamp: 1 },
 				{ role: "system", content: "later standalone guidance", timestamp: 2 },
 			],
 		});
 
-		expect(fallback.systemPrompt).toBe("complete\n\nlater standalone guidance");
+		expect(fallback.systemPrompt).toBe("old\n\nfirst delta\n\nlater standalone guidance");
 	});
 
 	test("lets unsupported Anthropic models hard-fallback instead of throwing", async () => {
 		const context: Context = {
 			systemPrompt: "old",
+			effectiveSystemPrompt: "new",
 			messages: [
 				{ role: "user", content: "hello", timestamp: 1 },
-				{ role: "system", content: "changed", systemPrompt: "new", timestamp: 2 },
+				{ role: "system", content: "changed", timestamp: 2 },
 			],
 		};
 		let payload: { system?: Array<{ text?: string }>; messages?: Array<{ role: string }> } | undefined;

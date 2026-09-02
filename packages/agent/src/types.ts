@@ -332,8 +332,10 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
  * assigned arrays before storing them.
  */
 export interface AgentState {
-	/** System prompt sent with each model request. */
+	/** Stable top-level system prompt sent with each model request. */
 	systemPrompt: string;
+	/** Complete current prompt used when chronological system messages require hard fallback. */
+	effectiveSystemPrompt?: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -411,8 +413,10 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
-	/** System prompt included with the request. */
+	/** Stable top-level system prompt included with the request. */
 	systemPrompt: string;
+	/** Complete current prompt used when chronological system messages require hard fallback. */
+	effectiveSystemPrompt?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for this run. */

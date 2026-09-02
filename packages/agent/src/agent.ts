@@ -77,6 +77,7 @@ function createMutableAgentState(
 
 	return {
 		systemPrompt: initialState?.systemPrompt ?? "",
+		effectiveSystemPrompt: initialState?.effectiveSystemPrompt,
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
 		get tools() {
@@ -441,6 +442,7 @@ export class Agent {
 	private createContextSnapshot(): AgentContext {
 		return {
 			systemPrompt: this._state.systemPrompt,
+			effectiveSystemPrompt: this._state.effectiveSystemPrompt,
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
 		};

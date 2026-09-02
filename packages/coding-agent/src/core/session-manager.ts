@@ -65,6 +65,7 @@ export interface SessionMessageEntry extends SessionEntryBase {
 
 export interface SystemPromptEntry extends SessionEntryBase {
 	type: "system_prompt";
+	/** Complete prompt pieces at this point in the session. */
 	prompt: SystemPromptPiece[];
 	tools: Tool[];
 }

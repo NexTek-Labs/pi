@@ -431,8 +431,6 @@ export interface ToolLoadoutContent {
 export interface SystemMessage {
 	role: "system";
 	content: string | (TextContent | ToolLoadoutContent)[];
-	/** Complete effective system prompt after this update, used for hard provider fallback. */
-	systemPrompt?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -537,7 +535,10 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 }
 
 export interface Context {
+	/** Stable top-level prompt used as the provider cache prefix. */
 	systemPrompt?: string;
+	/** Complete current prompt used when chronological system messages require hard fallback. */
+	effectiveSystemPrompt?: string;
 	messages: Message[];
 	tools?: Tool[];
 }

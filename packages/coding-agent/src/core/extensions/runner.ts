@@ -1141,14 +1141,14 @@ export class ExtensionRunner {
 		systemPromptOptions: BuildSystemPromptInput,
 	): Promise<BeforeAgentStartCombinedResult> {
 		const currentOptions = normalizeBuildSystemPromptOptions(systemPromptOptions);
-		const renderSystemPrompt = (): string => buildSystemPrompt(currentOptions);
+		const renderCurrentSystemPrompt = (): string => buildSystemPrompt(currentOptions);
 		const ctx = Object.defineProperties(
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
 		) as ExtensionContext;
 		ctx.getSystemPrompt = () => {
 			this.assertActive();
-			return renderSystemPrompt();
+			return renderCurrentSystemPrompt();
 		};
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 
@@ -1163,7 +1163,7 @@ export class ExtensionRunner {
 						prompt,
 						images,
 						get systemPrompt() {
-							return renderSystemPrompt();
+							return renderCurrentSystemPrompt();
 						},
 						systemPromptOptions: currentOptions,
 					};
@@ -1175,7 +1175,15 @@ export class ExtensionRunner {
 							messages.push(result.message);
 						}
 						if (result.systemPrompt !== undefined) {
-							currentOptions.forceSystemPrompt = result.systemPrompt;
+							const currentSystemPrompt = renderCurrentSystemPrompt();
+							if (
+								currentOptions.forceSystemPrompt === undefined &&
+								result.systemPrompt.startsWith(currentSystemPrompt)
+							) {
+								currentOptions.promptTail += result.systemPrompt.slice(currentSystemPrompt.length);
+							} else {
+								currentOptions.forceSystemPrompt = result.systemPrompt;
+							}
 						}
 					}
 				} catch (err) {

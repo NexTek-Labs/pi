@@ -771,6 +771,28 @@ describe("ExtensionRunner", () => {
 
 			expect(errors).toEqual([]);
 			expect(buildSystemPrompt(chained.systemPromptOptions)).toBe(`${basePrompt}\nfirst\nsecond`);
+			expect(chained.systemPromptOptions.promptTail).toBe("\nfirst\nsecond");
+			expect(chained.systemPromptOptions.forceSystemPrompt).toBeUndefined();
+		});
+
+		it("keeps non-appending system prompt returns as full replacements", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", () => ({ systemPrompt: "replacement" }));
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "replacement.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, { cwd: tempDir });
+
+			expect(chained.systemPromptOptions.promptTail).toBe("");
+			expect(chained.systemPromptOptions.forceSystemPrompt).toBe("replacement");
+			expect(buildSystemPrompt(chained.systemPromptOptions)).toBe("replacement");
 		});
 
 		it("renders mutable system prompt options for later handlers", async () => {

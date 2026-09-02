@@ -618,6 +618,7 @@ export class AgentSession {
 								? [...nextContext.messages, updateMessage]
 								: nextContext.messages,
 					systemPrompt: this.agent.state.systemPrompt,
+					effectiveSystemPrompt: this.agent.state.effectiveSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
 				model: this.agent.state.model,
@@ -1026,7 +1027,10 @@ export class AgentSession {
 
 		// Rebuild the default prompt for the next run. An active run keeps its provider baseline.
 		const baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		if (!this.isStreaming) this.agent.state.systemPrompt = baseSystemPrompt;
+		if (!this.isStreaming) {
+			this.agent.state.systemPrompt = baseSystemPrompt;
+			this.agent.state.effectiveSystemPrompt = baseSystemPrompt;
+		}
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1129,6 +1133,7 @@ export class AgentSession {
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: appendSystemPrompt ?? "",
+			promptTail: "",
 			selectedTools: validToolNames,
 			toolSnippets,
 			toolGuidelines,
@@ -1166,10 +1171,11 @@ export class AgentSession {
 			this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
 		}
 		this.agent.state.systemPrompt = update.state.prompt.baseline;
+		this.agent.state.effectiveSystemPrompt = update.state.prompt.effective;
 		return { requestPrompt: update.state.prompt.baseline, message, transcriptUpdate };
 	}
 
-	private _checkpointModelContext(): void {
+	private _checkpointModelContext(persist: boolean): void {
 		this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
 		const options = this._modelContextState?.options ?? this._baseSystemPromptOptions;
 		const pieces = this._modelContextState?.prompt.pieces ?? buildSystemPromptPieces(options);
@@ -1182,7 +1188,9 @@ export class AgentSession {
 			prompt: { pieces, effective: prompt, baseline: prompt },
 			tools: { visible: tools, catalog: new Map(tools) },
 		};
+		if (persist) this.sessionManager.appendSystemPromptState(pieces, [...tools.values()]);
 		this.agent.state.systemPrompt = prompt;
+		this.agent.state.effectiveSystemPrompt = prompt;
 	}
 
 	private _restoreModelContextState(): ModelContextRuntimeState | undefined {
@@ -1199,11 +1207,13 @@ export class AgentSession {
 			tools: { visible: tools, catalog: new Map(tools) },
 		};
 		this.agent.state.systemPrompt = prompt;
+		this.agent.state.effectiveSystemPrompt = prompt;
 		return this._modelContextState;
 	}
 
 	private _resetModelContextState(): void {
 		this._modelContextState = undefined;
+		this.agent.state.effectiveSystemPrompt = undefined;
 		this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
 	}
 
@@ -1219,8 +1229,10 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
-			this.agent.state.systemPrompt =
+			const effectiveSystemPrompt =
 				this._modelContextState?.prompt.effective ?? buildSystemPrompt(this._baseSystemPromptOptions);
+			this.agent.state.systemPrompt = effectiveSystemPrompt;
+			this.agent.state.effectiveSystemPrompt = effectiveSystemPrompt;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
@@ -2127,7 +2139,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
-			this._checkpointModelContext();
+			this._checkpointModelContext(true);
 			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2453,7 +2465,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
-			this._checkpointModelContext();
+			this._checkpointModelContext(true);
 			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2584,7 +2596,9 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this.agent.state.systemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		const systemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		this.agent.state.systemPrompt = systemPrompt;
+		this.agent.state.effectiveSystemPrompt = systemPrompt;
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -2919,7 +2933,6 @@ export class AgentSession {
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		await this._resourceLoader.reload();
-		this._resetModelContextState();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
 			flagValues: previousFlagValues,
@@ -3381,7 +3394,7 @@ export class AgentSession {
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
 			this._restoreModelContextState();
-			this._checkpointModelContext();
+			this._checkpointModelContext(false);
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({

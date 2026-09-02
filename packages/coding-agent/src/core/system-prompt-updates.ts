@@ -125,7 +125,10 @@ export function prepareModelContextUpdate(input: {
 		};
 	}
 
-	const promptDiff = diffSystemPrompts(previous.prompt.pieces, pieces);
+	const promptDiff =
+		previous.prompt.effective === effective
+			? ({ type: "unchanged" } as const)
+			: diffSystemPrompts(previous.prompt.pieces, pieces);
 	const added = [...input.tools].filter(([name]) => !previous.tools.visible.has(name)).map(([, tool]) => tool);
 	const removed = [...previous.tools.visible].filter(([name]) => !input.tools.has(name)).map(([, tool]) => tool);
 	const declarationChanged = [...input.tools].some(([name, tool]) => {
@@ -207,7 +210,6 @@ export function createSystemPromptUpdateMessage(
 	return {
 		role: "system",
 		content,
-		systemPrompt: update.state.prompt.effective,
 		timestamp: Date.now(),
 	};
 }

@@ -68,19 +68,12 @@ export function hardFallbackSystemMessages(context: Context): Context {
 	const systemMessages = context.messages.filter((message) => message.role === "system");
 	if (systemMessages.length === 0) return context;
 
-	let systemPrompt = context.systemPrompt ?? "";
-	let appendedGuidance: string[] = [];
-	for (const message of systemMessages) {
-		if (message.systemPrompt !== undefined) {
-			systemPrompt = message.systemPrompt;
-			appendedGuidance = [];
-		} else {
-			const text = getSystemMessageText(message);
-			if (text.length > 0) appendedGuidance.push(text);
+	let systemPrompt = context.effectiveSystemPrompt ?? context.systemPrompt ?? "";
+	if (context.effectiveSystemPrompt === undefined) {
+		const appendedGuidance = systemMessages.map(getSystemMessageText).filter((text) => text.length > 0);
+		if (appendedGuidance.length > 0) {
+			systemPrompt = [systemPrompt, ...appendedGuidance].filter((text) => text.length > 0).join("\n\n");
 		}
-	}
-	if (appendedGuidance.length > 0) {
-		systemPrompt = [systemPrompt, ...appendedGuidance].filter((text) => text.length > 0).join("\n\n");
 	}
 	const messages = context.messages
 		.filter((message) => message.role !== "system")
@@ -106,5 +99,5 @@ export function hardFallbackSystemMessages(context: Context): Context {
 				}),
 			};
 		});
-	return { ...context, systemPrompt, messages };
+	return { ...context, systemPrompt, effectiveSystemPrompt: systemPrompt, messages };
 }
