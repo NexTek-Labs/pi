@@ -1127,7 +1127,7 @@ function convertToolResult(
 	normalizeToolName: (name: string) => string,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
-	for (const name of resolveMessageToolLoadout(msg).addedNames) {
+	for (const name of resolveMessageToolLoadout(msg).names) {
 		const normalizedName = normalizeToolName(name);
 		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
 		loadedToolNames.add(normalizedName);

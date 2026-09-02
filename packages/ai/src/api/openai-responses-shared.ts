@@ -32,11 +32,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import {
-	getSystemMessageText,
-	type ResolvedToolLoadoutChange,
-	resolveMessageToolLoadout,
-} from "../utils/system-messages.ts";
+import { getSystemMessageText, resolveMessageToolLoadout } from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -186,8 +182,8 @@ export function convertResponsesMessages<TApi extends Api>(
 		});
 	}
 
-	const appendToolLoadout = (loadout: ResolvedToolLoadoutChange, seed: string): void => {
-		const added = loadout.added.filter((tool) => {
+	const appendToolLoadout = (tools: Tool[], seed: string): void => {
+		const added = tools.filter((tool) => {
 			if (loadedToolNames.has(tool.name)) return false;
 			loadedToolNames.add(tool.name);
 			return true;
@@ -226,7 +222,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
 		if (msg.role === "system") {
-			appendToolLoadout(resolveMessageToolLoadout(msg), `system:${msgIndex}`);
+			appendToolLoadout(resolveMessageToolLoadout(msg).tools, `system:${msgIndex}`);
 			const text = getSystemMessageText(msg);
 			if (text.length > 0) {
 				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
@@ -360,7 +356,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			}
 
 			appendToolLoadout(
-				resolveMessageToolLoadout(msg, (name) => options?.deferredTools?.get(name)),
+				resolveMessageToolLoadout(msg, (name) => options?.deferredTools?.get(name)).tools,
 				msg.toolCallId,
 			);
 		}

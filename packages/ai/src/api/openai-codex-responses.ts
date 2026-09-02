@@ -32,7 +32,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { getSystemMessageToolLoadout, hardFallbackSystemMessages } from "../utils/system-messages.ts";
+import { getSystemMessageTools, hardFallbackSystemMessages } from "../utils/system-messages.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -536,9 +536,7 @@ function buildRequestBody(
 			: undefined;
 	const hasUnsupportedToolAddition =
 		deferredToolsMode === undefined &&
-		context.messages.some(
-			(message) => message.role === "system" && getSystemMessageToolLoadout(message).added.length > 0,
-		);
+		context.messages.some((message) => message.role === "system" && getSystemMessageTools(message).length > 0);
 	const requestContext = hasUnsupportedToolAddition ? hardFallbackSystemMessages(context) : context;
 	const toolPlacement = splitDeferredTools(requestContext, deferredToolsMode !== undefined);
 	const messages = convertResponsesMessages(model, requestContext, CODEX_TOOL_CALL_PROVIDERS, {

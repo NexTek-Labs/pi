@@ -16,7 +16,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { getSystemMessageToolLoadout, hardFallbackSystemMessages } from "../utils/system-messages.ts";
+import { getSystemMessageTools, hardFallbackSystemMessages } from "../utils/system-messages.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -283,11 +283,9 @@ function buildParams(
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ) {
-	const hasToolChanges = context.messages.some((message) => {
-		if (message.role !== "system") return false;
-		const loadout = getSystemMessageToolLoadout(message);
-		return loadout.added.length > 0 || loadout.removed.length > 0;
-	});
+	const hasToolChanges = context.messages.some(
+		(message) => message.role === "system" && getSystemMessageTools(message).length > 0,
+	);
 	const requestContext = hasToolChanges ? hardFallbackSystemMessages(context) : context;
 	const messages = convertResponsesMessages(model, requestContext, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,

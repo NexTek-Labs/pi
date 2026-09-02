@@ -193,7 +193,7 @@ describe("AgentSession system prompt updates", () => {
 		expect(nextHasLoadout).toBe(false);
 	});
 
-	test("records provider-independent tool additions and removals", async () => {
+	test("records tool additions and falls back to a snapshot for removals", async () => {
 		harness = await createHarness({
 			initialActiveToolNames: ["first_tool"],
 			extensionFactories: [
@@ -211,14 +211,17 @@ describe("AgentSession system prompt updates", () => {
 					}
 					pi.on("before_agent_start", (event) => {
 						if (event.prompt === "first") event.systemPromptOptions.selectedTools = ["first_tool"];
-						if (event.prompt === "second") event.systemPromptOptions.selectedTools = ["second_tool"];
+						if (event.prompt === "second")
+							event.systemPromptOptions.selectedTools = ["first_tool", "second_tool"];
+						if (event.prompt === "third") event.systemPromptOptions.selectedTools = ["second_tool"];
 					});
 				},
 			],
 		});
 
-		let loadout: { added: string[]; removed: string[] } | undefined;
+		let loadout: string[] | undefined;
 		let updateText = "";
+		let removalHasSystemMessage = true;
 		harness.setResponses([
 			() => fauxAssistantMessage("first"),
 			(context) => {
@@ -226,22 +229,23 @@ describe("AgentSession system prompt updates", () => {
 					if (message.role !== "system" || typeof message.content === "string") continue;
 					for (const block of message.content) {
 						if (block.type === "text") updateText += block.text;
-						if (block.type === "toolLoadout") {
-							loadout = {
-								added: block.added.map((tool) => tool.name),
-								removed: block.removed.map((tool) => tool.name),
-							};
-						}
+						if (block.type === "toolLoadout") loadout = block.tools.map((tool) => tool.name);
 					}
 				}
 				return fauxAssistantMessage("second");
+			},
+			(context) => {
+				removalHasSystemMessage = context.messages.some((message) => message.role === "system");
+				return fauxAssistantMessage("third");
 			},
 		]);
 
 		await harness.session.prompt("first");
 		await harness.session.prompt("second");
+		await harness.session.prompt("third");
 
-		expect(loadout).toEqual({ added: ["second_tool"], removed: ["first_tool"] });
+		expect(loadout).toEqual(["second_tool"]);
+		expect(removalHasSystemMessage).toBe(false);
 		expect(updateText).toContain("second_tool prompt snippet");
 		expect(updateText).toContain("Use second_tool carefully");
 		expect(harness.session.getActiveToolNames()).toEqual(["second_tool"]);

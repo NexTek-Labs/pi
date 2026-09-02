@@ -1,13 +1,5 @@
 import type { Context, Message, SystemMessage, TextContent, Tool } from "../types.ts";
 
-export interface ResolvedToolLoadoutChange {
-	tools: Tool[];
-	added: Tool[];
-	removed: Tool[];
-	addedNames: string[];
-	removedNames: string[];
-}
-
 export function getSystemMessageText(message: SystemMessage): string {
 	if (typeof message.content === "string") return message.content;
 	return message.content
@@ -16,51 +8,31 @@ export function getSystemMessageText(message: SystemMessage): string {
 		.join("\n");
 }
 
-export function getSystemMessageToolLoadout(message: SystemMessage): {
-	tools: Tool[];
-	added: Tool[];
-	removed: Tool[];
-} {
-	if (typeof message.content === "string") return { tools: [], added: [], removed: [] };
-	let tools: Tool[] = [];
-	const added: Tool[] = [];
-	const removed: Tool[] = [];
-	for (const block of message.content) {
-		if (block.type !== "toolLoadout") continue;
-		tools = [...block.tools];
-		added.push(...block.added);
-		removed.push(...block.removed);
-	}
-	return { tools, added, removed };
+export function getSystemMessageTools(message: SystemMessage): Tool[] {
+	if (typeof message.content === "string") return [];
+	return message.content.flatMap((block) => (block.type === "toolLoadout" ? block.tools : []));
 }
 
-/** Normalize rich system loadouts and legacy tool-result additions into one chronological change. */
+/** Normalize rich system loadouts and legacy tool-result additions. */
 export function resolveMessageToolLoadout(
 	message: Message,
 	resolveTool: (name: string) => Tool | undefined = () => undefined,
-): ResolvedToolLoadoutChange {
+) {
 	if (message.role === "system") {
-		const loadout = getSystemMessageToolLoadout(message);
-		return {
-			...loadout,
-			addedNames: loadout.added.map((tool) => tool.name),
-			removedNames: loadout.removed.map((tool) => tool.name),
-		};
+		const tools = getSystemMessageTools(message);
+		return { tools, names: tools.map((tool) => tool.name) };
 	}
 	if (message.role === "toolResult") {
-		const addedNames = [...new Set(message.addedToolNames ?? [])];
+		const names = [...new Set(message.addedToolNames ?? [])];
 		return {
-			tools: [],
-			added: addedNames.flatMap((name) => {
+			tools: names.flatMap((name) => {
 				const tool = resolveTool(name);
 				return tool ? [tool] : [];
 			}),
-			removed: [],
-			addedNames,
-			removedNames: [],
+			names,
 		};
 	}
-	return { tools: [], added: [], removed: [], addedNames: [], removedNames: [] };
+	return { tools: [], names: [] };
 }
 
 /** Fold transcript system updates into complete top-level state for providers without native support. */

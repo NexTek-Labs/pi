@@ -117,7 +117,6 @@ import {
 import {
 	consolidateSystemPromptMessages,
 	createSystemPromptUpdateMessage,
-	getContextUpdateCapabilities,
 	type ModelContextState,
 	prepareModelContextUpdate,
 	systemPromptTool,
@@ -1152,13 +1151,11 @@ export class AgentSession {
 			options,
 			tools: new Map(selectedTools.map((tool) => [tool.name, systemPromptTool(tool)])),
 			previous: this._modelContextState,
-			capabilities: getContextUpdateCapabilities(this.model),
+			model: this.model,
 		});
 		const message = update.type === "incremental" ? createSystemPromptUpdateMessage(update) : undefined;
 		if (update.type !== "unchanged") {
-			this.sessionManager.appendSystemPromptState(update.state.prompt.pieces, [
-				...update.state.tools.visible.values(),
-			]);
+			this.sessionManager.appendSystemPromptState(update.state.prompt.pieces, [...update.state.tools.values()]);
 		}
 
 		// Commit only after prompt validation and durable state preparation succeeds.
@@ -1180,12 +1177,12 @@ export class AgentSession {
 		const pieces = this._modelContextState?.prompt.pieces ?? buildSystemPromptPieces(options);
 		const prompt = renderSystemPrompt(pieces);
 		const tools =
-			this._modelContextState?.tools.visible ??
+			this._modelContextState?.tools ??
 			new Map(this.agent.state.tools.map((tool) => [tool.name, systemPromptTool(tool)]));
 		this._modelContextState = {
 			options,
 			prompt: { pieces, effective: prompt, baseline: prompt },
-			tools: { visible: tools, catalog: new Map(tools) },
+			tools,
 		};
 		if (persist) this.sessionManager.appendSystemPromptState(pieces, [...tools.values()]);
 		this.agent.state.systemPrompt = prompt;
@@ -1203,7 +1200,7 @@ export class AgentSession {
 		this._modelContextState = {
 			options: this._baseSystemPromptOptions,
 			prompt: { pieces: stored.prompt, effective: prompt, baseline: prompt },
-			tools: { visible: tools, catalog: new Map(tools) },
+			tools,
 		};
 		this.agent.state.systemPrompt = prompt;
 		this.agent.state.effectiveSystemPrompt = prompt;

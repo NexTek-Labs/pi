@@ -420,12 +420,8 @@ export interface DeferredHandle {
 
 export interface ToolLoadoutContent {
 	type: "toolLoadout";
-	/** Complete provider-neutral definitions in stable declaration order. */
-	tools: Tool[];
 	/** Complete provider-neutral definitions that become available at this point. */
-	added: Tool[];
-	/** Complete provider-neutral definitions that stop being available at this point. */
-	removed: Tool[];
+	tools: Tool[];
 }
 
 export interface SystemMessage {

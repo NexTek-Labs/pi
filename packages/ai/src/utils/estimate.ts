@@ -1,5 +1,5 @@
 import type { AssistantMessage, Context, ImageContent, Message, TextContent, Tool, Usage } from "../types.ts";
-import { getSystemMessageText, getSystemMessageToolLoadout, resolveMessageToolLoadout } from "./system-messages.ts";
+import { getSystemMessageText, getSystemMessageTools, resolveMessageToolLoadout } from "./system-messages.ts";
 
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
@@ -47,8 +47,7 @@ export function estimateMessageTokens(message: Message): number {
 	let chars = 0;
 
 	if (message.role === "system") {
-		const loadout = getSystemMessageToolLoadout(message);
-		return estimateTextTokens(getSystemMessageText(message)) + estimateToolsTokens(loadout.added);
+		return estimateTextTokens(getSystemMessageText(message)) + estimateToolsTokens(getSystemMessageTools(message));
 	}
 	if (message.role === "user") return estimateTextAndImageContentTokens(message.content);
 	if (message.role === "toolResult") return estimateTextAndImageContentTokens(message.content);
@@ -125,12 +124,12 @@ export function estimateContextTokens(context: Context | readonly Message[]): Co
 		const systemAddedNames = new Set(
 			trailingMessages
 				.filter((message) => message.role === "system")
-				.flatMap((message) => resolveMessageToolLoadout(message).addedNames),
+				.flatMap((message) => resolveMessageToolLoadout(message).names),
 		);
 		const legacyAddedNames = new Set(
 			trailingMessages
 				.filter((message) => message.role === "toolResult")
-				.flatMap((message) => resolveMessageToolLoadout(message).addedNames)
+				.flatMap((message) => resolveMessageToolLoadout(message).names)
 				.filter((name) => !systemAddedNames.has(name)),
 		);
 		const addedToolTokens = estimateToolsTokens(context.tools?.filter((tool) => legacyAddedNames.has(tool.name)));

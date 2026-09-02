@@ -273,7 +273,7 @@ export function estimateTokens(message: AgentMessage): number {
 					? message.content.length
 					: message.content.reduce(
 							(total, block) =>
-								total + (block.type === "text" ? block.text.length : JSON.stringify(block.added).length),
+								total + (block.type === "text" ? block.text.length : JSON.stringify(block.tools).length),
 							0,
 						);
 			return Math.ceil(chars / 4);

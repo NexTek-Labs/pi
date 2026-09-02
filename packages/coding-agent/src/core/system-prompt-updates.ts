@@ -1,5 +1,6 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, Model, SystemMessage, TextContent, Tool, ToolLoadoutContent } from "@earendil-works/pi-ai/compat";
+import { getContextUpdateCapabilities } from "@earendil-works/pi-ai/compat";
 import {
 	type BuildSystemPromptOptions,
 	buildSystemPromptPieces,
@@ -8,67 +9,13 @@ import {
 	type SystemPromptPiece,
 } from "./system-prompt.ts";
 
-export type ContextUpdateCapabilities =
-	| { systemMessages: "none"; toolAddition: "none"; toolRemoval: "none" }
-	| {
-			systemMessages: "native";
-			toolAddition: "none" | "native";
-			toolRemoval: "none" | "soft";
-	  };
-
-const NO_CONTEXT_UPDATES = {
-	systemMessages: "none",
-	toolAddition: "none",
-	toolRemoval: "none",
-} as const satisfies ContextUpdateCapabilities;
-
-/** Resolve the chronological context updates supported by a model transport. */
-export function getContextUpdateCapabilities(model: Model<Api> | undefined): ContextUpdateCapabilities {
-	if (!model) return NO_CONTEXT_UPDATES;
-	if (model.api === "faux" || model.api.startsWith("faux:")) {
-		return { systemMessages: "native", toolAddition: "native", toolRemoval: "soft" };
-	}
-	if (model.api === "mistral-conversations" || model.api === "azure-openai-responses") {
-		return { systemMessages: "native", toolAddition: "none", toolRemoval: "none" };
-	}
-	if (model.api === "openai-completions") {
-		const supportsToolAddition =
-			model.compat !== undefined && "deferredToolsMode" in model.compat && model.compat.deferredToolsMode === "kimi";
-		return {
-			systemMessages: "native",
-			toolAddition: supportsToolAddition ? "native" : "none",
-			toolRemoval: "none",
-		};
-	}
-	if (model.api === "openai-responses" || model.api === "openai-codex-responses") {
-		const supportsToolAddition =
-			model.compat !== undefined &&
-			"supportsAdditionalTools" in model.compat &&
-			(model.compat.supportsAdditionalTools === true || model.compat.supportsToolSearch === true);
-		return {
-			systemMessages: "native",
-			toolAddition: supportsToolAddition ? "native" : "none",
-			toolRemoval: "soft",
-		};
-	}
-	return NO_CONTEXT_UPDATES;
-}
-
 export interface ModelContextState {
 	prompt: {
 		pieces: SystemPromptPiece[];
 		effective: string;
 		baseline: string;
 	};
-	tools: {
-		visible: Map<string, Tool>;
-		catalog: Map<string, Tool>;
-	};
-}
-
-interface ToolLoadoutChange {
-	added: Tool[];
-	removed: Tool[];
+	tools: Map<string, Tool>;
 }
 
 export type PreparedModelContextUpdate =
@@ -77,7 +24,7 @@ export type PreparedModelContextUpdate =
 			type: "incremental";
 			state: ModelContextState;
 			promptText?: string;
-			toolChange: ToolLoadoutChange;
+			addedTools: Tool[];
 	  };
 
 /** Convert an executable agent tool into the provider-independent declaration stored in prompt updates. */
@@ -99,18 +46,16 @@ export function prepareModelContextUpdate(input: {
 	options: BuildSystemPromptOptions;
 	tools: Map<string, Tool>;
 	previous?: ModelContextState;
-	capabilities: ContextUpdateCapabilities;
+	model?: Model<Api>;
 }): PreparedModelContextUpdate {
-	const { options, tools, previous, capabilities } = input;
+	const { options, tools, previous } = input;
+	const capabilities = getContextUpdateCapabilities(input.model);
 	const pieces = buildSystemPromptPieces(options);
 	const effective = renderSystemPrompt(pieces);
 	if (!previous) {
 		return {
 			type: "initial",
-			state: {
-				prompt: { pieces, effective, baseline: effective },
-				tools: { visible: tools, catalog: new Map(tools) },
-			},
+			state: { prompt: { pieces, effective, baseline: effective }, tools },
 		};
 	}
 
@@ -118,56 +63,48 @@ export function prepareModelContextUpdate(input: {
 		previous.prompt.effective === effective
 			? ({ type: "unchanged" } as const)
 			: diffSystemPrompts(previous.prompt.pieces, pieces);
-	const added = [...tools].filter(([name]) => !previous.tools.visible.has(name)).map(([, tool]) => tool);
-	const removed = [...previous.tools.visible].filter(([name]) => !tools.has(name)).map(([, tool]) => tool);
+	const added = [...tools].filter(([name]) => !previous.tools.has(name)).map(([, tool]) => tool);
+	const hasRemovedTools = [...previous.tools.keys()].some((name) => !tools.has(name));
 	const declarationChanged = [...tools].some(([name, tool]) => {
-		const previousTool = previous.tools.visible.get(name) ?? previous.tools.catalog.get(name);
+		const previousTool = previous.tools.get(name);
 		return previousTool !== undefined && !toolDeclarationsEqual(previousTool, tool);
 	});
-	const previousNames = [...previous.tools.visible.keys()];
+	const previousNames = [...previous.tools.keys()];
 	const currentNames = [...tools.keys()];
 	const declarationOrderChanged =
-		added.length === 0 && removed.length === 0 && previousNames.some((name, index) => name !== currentNames[index]);
+		added.length === 0 && !hasRemovedTools && previousNames.some((name, index) => name !== currentNames[index]);
 	const requiresReplacement =
 		promptDiff.type === "replace" ||
 		(options.forceSystemPrompt !== undefined && promptDiff.type !== "unchanged") ||
 		(promptDiff.type === "update" && capabilities.systemMessages === "none") ||
 		declarationChanged ||
 		declarationOrderChanged ||
-		(added.length > 0 && capabilities.toolAddition === "none") ||
-		(removed.length > 0 && capabilities.toolRemoval === "none");
+		hasRemovedTools ||
+		(added.length > 0 && capabilities.toolAddition === "none");
 
 	if (requiresReplacement) {
 		return {
 			type: "replacement",
-			state: {
-				prompt: { pieces, effective, baseline: effective },
-				tools: { visible: tools, catalog: new Map(tools) },
-			},
+			state: { prompt: { pieces, effective, baseline: effective }, tools },
 		};
 	}
 
-	if (promptDiff.type === "unchanged" && added.length === 0 && removed.length === 0) {
+	if (promptDiff.type === "unchanged" && added.length === 0) {
 		return {
 			type: "unchanged",
-			state: {
-				prompt: { pieces, effective, baseline: previous.prompt.baseline },
-				tools: { visible: tools, catalog: previous.tools.catalog },
-			},
+			state: { prompt: { pieces, effective, baseline: previous.prompt.baseline }, tools },
 		};
 	}
 
-	const catalog = new Map(previous.tools.catalog);
-	for (const tool of added) catalog.set(tool.name, tool);
 	const state: ModelContextState = {
 		prompt: { pieces, effective, baseline: previous.prompt.baseline },
-		tools: { visible: tools, catalog },
+		tools,
 	};
 	return {
 		type: "incremental",
 		state,
 		promptText: promptDiff.type === "update" ? promptDiff.text : undefined,
-		toolChange: { added, removed },
+		addedTools: added,
 	};
 }
 
@@ -177,24 +114,11 @@ export function createSystemPromptUpdateMessage(
 ): SystemMessage {
 	const content: Array<TextContent | ToolLoadoutContent> = [];
 	const text = update.promptText ? [update.promptText] : [];
-	const { added, removed } = update.toolChange;
-	if (added.length > 0 || removed.length > 0) {
-		content.push({
-			type: "toolLoadout",
-			tools: [...update.state.tools.catalog.values()],
-			added,
-			removed,
-		});
-		if (added.length > 0) {
-			text.push(
-				`The following tools are now available and may be used: ${added.map((tool) => tool.name).join(", ")}.`,
-			);
-		}
-		if (removed.length > 0) {
-			text.push(
-				`The following tools are no longer available. Do not call them; such calls will be rejected: ${removed.map((tool) => tool.name).join(", ")}.`,
-			);
-		}
+	if (update.addedTools.length > 0) {
+		content.push({ type: "toolLoadout", tools: update.addedTools });
+		text.push(
+			`The following tools are now available and may be used: ${update.addedTools.map((tool) => tool.name).join(", ")}.`,
+		);
 	}
 	content.push({ type: "text", text: text.join("\n\n") });
 	return {
