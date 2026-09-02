@@ -23,7 +23,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { getSystemMessageToolChange, hardFallbackSystemMessages } from "../utils/system-messages.ts";
+import { fallbackUnsupportedToolChanges } from "../utils/system-messages.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -277,15 +277,10 @@ function buildParams(
 		: compat.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const hasUnsupportedToolChange = context.messages.some((message) => {
-		if (message.role !== "system") return false;
-		const change = getSystemMessageToolChange(message);
-		return (
-			(change.added.length > 0 && deferredToolsMode === undefined) ||
-			(change.removed.length > 0 && deferredToolsMode !== "additional-tools")
-		);
-	});
-	const requestContext = hasUnsupportedToolChange ? hardFallbackSystemMessages(context) : context;
+	const requestContext = fallbackUnsupportedToolChanges(
+		context,
+		deferredToolsMode === "additional-tools" ? "all" : deferredToolsMode === "tool-search" ? "additions" : "none",
+	);
 	const toolPlacement =
 		deferredToolsMode === "additional-tools"
 			? { immediate: [], deferred: new Map<string, Tool>() }

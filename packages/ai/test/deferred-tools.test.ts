@@ -505,6 +505,30 @@ describe("deferred tools", () => {
 		);
 	});
 
+	it("preserves declaration order across complete OpenAI Responses tool deltas", async () => {
+		const firstTool = makeTool("first_tool");
+		const secondTool = makeTool("second_tool");
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				{
+					role: "system",
+					content: "The active tool declarations changed",
+					toolsAdded: [secondTool, firstTool],
+					toolsRemoved: [firstTool, secondTool],
+					timestamp: 2,
+				},
+			],
+			tools: [secondTool, firstTool],
+		};
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
+
+		expect(additionalToolSnapshots(payload)).toEqual([
+			["first_tool", "second_tool"],
+			["second_tool", "first_tool"],
+		]);
+	});
+
 	it("reconstructs empty and re-added OpenAI Responses tool snapshots", async () => {
 		const oldTool = { ...makeTool("changing_tool"), description: "old declaration" };
 		const newTool = { ...makeTool("changing_tool"), description: "new declaration" };

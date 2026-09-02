@@ -421,7 +421,11 @@ export interface DeferredHandle {
 export interface SystemMessage {
 	role: "system";
 	content: string | TextContent[];
-	/** Complete provider-neutral definitions that become available at this point. */
+	/**
+	 * Complete provider-neutral definitions that become available at this point.
+	 * When a name also appears in `toolsRemoved`, adapters remove the old declaration first,
+	 * then add this one to preserve replacement and ordering semantics.
+	 */
 	toolsAdded?: Tool[];
 	/** Complete provider-neutral definitions that stop being available at this point. */
 	toolsRemoved?: Tool[];

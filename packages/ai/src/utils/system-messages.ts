@@ -78,3 +78,18 @@ export function hardFallbackSystemMessages(context: Context): Context {
 		});
 	return { ...context, systemPrompt, effectiveSystemPrompt: systemPrompt, messages };
 }
+
+export type ToolChangeSupport = "none" | "additions" | "all";
+
+/** Replace chronological updates when a transport cannot represent their tool deltas. */
+export function fallbackUnsupportedToolChanges(context: Context, support: ToolChangeSupport): Context {
+	if (support === "all") return context;
+	for (const message of context.messages) {
+		if (message.role !== "system") continue;
+		const change = getSystemMessageToolChange(message);
+		if (change.removed.length > 0 || (support === "none" && change.added.length > 0)) {
+			return hardFallbackSystemMessages(context);
+		}
+	}
+	return context;
+}

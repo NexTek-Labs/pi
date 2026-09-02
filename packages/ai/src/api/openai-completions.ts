@@ -46,9 +46,8 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
+	fallbackUnsupportedToolChanges,
 	getSystemMessageText,
-	getSystemMessageToolChange,
-	hardFallbackSystemMessages,
 	resolveMessageToolChange,
 } from "../utils/system-messages.ts";
 import {
@@ -794,12 +793,10 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const hasUnsupportedToolChanges = context.messages.some((message) => {
-		if (message.role !== "system") return false;
-		const change = getSystemMessageToolChange(message);
-		return change.removed.length > 0 || (change.added.length > 0 && compat.deferredToolsMode !== "kimi");
-	});
-	const requestContext = hasUnsupportedToolChanges ? hardFallbackSystemMessages(context) : context;
+	const requestContext = fallbackUnsupportedToolChanges(
+		context,
+		compat.deferredToolsMode === "kimi" ? "additions" : "none",
+	);
 	const messages = convertMessages(model, requestContext, compat, { grammarToolInputProperties });
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 

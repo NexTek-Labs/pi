@@ -19,11 +19,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import {
-	getSystemMessageText,
-	getSystemMessageToolChange,
-	hardFallbackSystemMessages,
-} from "../utils/system-messages.ts";
+import { fallbackUnsupportedToolChanges, getSystemMessageText } from "../utils/system-messages.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -140,12 +136,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const hasToolChanges = context.messages.some((message) => {
-				if (message.role !== "system") return false;
-				const change = getSystemMessageToolChange(message);
-				return change.added.length > 0 || change.removed.length > 0;
-			});
-			const requestContext = hasToolChanges ? hardFallbackSystemMessages(context) : context;
+			const requestContext = fallbackUnsupportedToolChanges(context, "none");
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
 			const transformedMessages = transformMessages(requestContext.messages, model, (id) =>
 				normalizeMistralToolCallId(id),

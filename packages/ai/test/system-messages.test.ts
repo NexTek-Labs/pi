@@ -1,7 +1,8 @@
+import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
-import type { AssistantMessage, Context } from "../src/types.ts";
-import { hardFallbackSystemMessages } from "../src/utils/system-messages.ts";
+import type { AssistantMessage, Context, Tool } from "../src/types.ts";
+import { fallbackUnsupportedToolChanges, hardFallbackSystemMessages } from "../src/utils/system-messages.ts";
 
 const assistant: AssistantMessage = {
 	role: "assistant",
@@ -58,6 +59,32 @@ describe("hardFallbackSystemMessages", () => {
 			expect.objectContaining({ role: "toolResult" }),
 		]);
 		expect(fallback.messages[1]).not.toHaveProperty("addedToolNames");
+	});
+
+	test("preserves provider replay data when no fallback is needed", () => {
+		const context: Context = { systemPrompt: "prompt", messages: [assistant] };
+
+		expect(hardFallbackSystemMessages(context)).toBe(context);
+	});
+
+	test("falls back only for tool changes unsupported by the transport", () => {
+		const tool: Tool = { name: "late_tool", description: "late tool", parameters: Type.Object({}) };
+		const addition: Context = {
+			systemPrompt: "old",
+			effectiveSystemPrompt: "current",
+			messages: [{ role: "system", content: "added", toolsAdded: [tool], timestamp: 1 }],
+			tools: [tool],
+		};
+		const removal: Context = {
+			...addition,
+			messages: [{ role: "system", content: "removed", toolsRemoved: [tool], timestamp: 1 }],
+			tools: [],
+		};
+
+		expect(fallbackUnsupportedToolChanges(addition, "all")).toBe(addition);
+		expect(fallbackUnsupportedToolChanges(addition, "additions")).toBe(addition);
+		expect(fallbackUnsupportedToolChanges(addition, "none").messages).toEqual([]);
+		expect(fallbackUnsupportedToolChanges(removal, "additions").messages).toEqual([]);
 	});
 
 	test("appends standalone guidance when complete effective state is unavailable", () => {

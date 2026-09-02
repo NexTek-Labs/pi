@@ -972,7 +972,7 @@ export class AgentSession {
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
-		return this.agent.state.systemPrompt;
+		return this.agent.state.effectiveSystemPrompt ?? this.agent.state.systemPrompt;
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -1026,7 +1026,7 @@ export class AgentSession {
 		// Rebuild the default prompt for the next run. An active run keeps its provider baseline.
 		const baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
 		if (!this.isStreaming) {
-			this.agent.state.systemPrompt = baseSystemPrompt;
+			if (!this._modelContextState) this.agent.state.systemPrompt = baseSystemPrompt;
 			this.agent.state.effectiveSystemPrompt = baseSystemPrompt;
 		}
 	}
@@ -1151,7 +1151,6 @@ export class AgentSession {
 			options,
 			tools: new Map(selectedTools.map((tool) => [tool.name, systemPromptTool(tool)])),
 			previous: this._modelContextState,
-			model: this.model,
 		});
 		const message = update.type === "incremental" ? createSystemPromptUpdateMessage(update) : undefined;
 		if (update.type !== "unchanged") {
@@ -1167,8 +1166,8 @@ export class AgentSession {
 			this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
 		}
 		this.agent.state.systemPrompt = update.state.prompt.baseline;
-		this.agent.state.effectiveSystemPrompt = update.state.prompt.effective;
-		return { requestPrompt: update.state.prompt.baseline, message, transcriptUpdate };
+		this.agent.state.effectiveSystemPrompt = renderSystemPrompt(update.state.prompt.pieces);
+		return { message, transcriptUpdate };
 	}
 
 	private _checkpointModelContext(persist: boolean): void {
@@ -1181,7 +1180,7 @@ export class AgentSession {
 			new Map(this.agent.state.tools.map((tool) => [tool.name, systemPromptTool(tool)]));
 		this._modelContextState = {
 			options,
-			prompt: { pieces, effective: prompt, baseline: prompt },
+			prompt: { pieces, baseline: prompt },
 			tools,
 		};
 		if (persist) this.sessionManager.appendSystemPromptState(pieces, [...tools.values()]);
@@ -1199,7 +1198,7 @@ export class AgentSession {
 		const tools = new Map(stored.tools.map((tool) => [tool.name, tool]));
 		this._modelContextState = {
 			options: this._baseSystemPromptOptions,
-			prompt: { pieces: stored.prompt, effective: prompt, baseline: prompt },
+			prompt: { pieces: stored.prompt, baseline: prompt },
 			tools,
 		};
 		this.agent.state.systemPrompt = prompt;
@@ -1209,6 +1208,7 @@ export class AgentSession {
 
 	private _resetModelContextState(): void {
 		this._modelContextState = undefined;
+		this.agent.state.systemPrompt = this.agent.state.effectiveSystemPrompt ?? this.agent.state.systemPrompt;
 		this.agent.state.effectiveSystemPrompt = undefined;
 		this.agent.state.messages = consolidateSystemPromptMessages(this.agent.state.messages);
 	}
@@ -1225,10 +1225,9 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
-			const effectiveSystemPrompt =
-				this._modelContextState?.prompt.effective ?? buildSystemPrompt(this._baseSystemPromptOptions);
-			this.agent.state.systemPrompt = effectiveSystemPrompt;
-			this.agent.state.effectiveSystemPrompt = effectiveSystemPrompt;
+			this.agent.state.effectiveSystemPrompt = this._modelContextState
+				? renderSystemPrompt(this._modelContextState.prompt.pieces)
+				: buildSystemPrompt(this._baseSystemPromptOptions);
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
@@ -1411,7 +1410,6 @@ export class AgentSession {
 			}
 			const preparedRun = this._preparePromptAndToolLoadout(result.systemPromptOptions);
 			if (preparedRun.message) messages.push(preparedRun.message);
-			this.agent.state.systemPrompt = preparedRun.requestPrompt;
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -2593,7 +2591,7 @@ export class AgentSession {
 
 		this._resourceLoader.extendResources(extensionPaths);
 		const systemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.state.systemPrompt = systemPrompt;
+		if (!this._modelContextState) this.agent.state.systemPrompt = systemPrompt;
 		this.agent.state.effectiveSystemPrompt = systemPrompt;
 	}
 

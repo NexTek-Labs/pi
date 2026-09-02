@@ -1,5 +1,4 @@
 import { type Context, fauxAssistantMessage, type Tool } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, test } from "vitest";
 import { normalizeBuildSystemPromptOptions } from "../src/core/system-prompt.ts";
@@ -47,6 +46,9 @@ describe("AgentSession system prompt updates", () => {
 
 		await harness.session.prompt("first");
 		await harness.session.prompt("plan");
+		expect(harness.session.agent.state.systemPrompt).toBe(providerPrompts[0]);
+		expect(harness.session.agent.state.effectiveSystemPrompt).toContain("Do not modify files.");
+		expect(harness.session.systemPrompt).toBe(harness.session.agent.state.effectiveSystemPrompt);
 		await harness.session.prompt("resume");
 
 		expect(providerPrompts[1]).toBe(providerPrompts[0]);
@@ -258,7 +260,7 @@ describe("AgentSession system prompt updates", () => {
 		expect(storedStates.at(-1)?.tools.map((tool) => tool.name)).toEqual(["second_tool"]);
 	});
 
-	test("uses incremental removal only for OpenAI complete tool snapshots", () => {
+	test("represents tool changes as provider-neutral deltas", () => {
 		const firstTool: Tool = {
 			name: "first_tool",
 			description: "first tool",
@@ -270,77 +272,63 @@ describe("AgentSession system prompt updates", () => {
 			parameters: Type.Object({}),
 		};
 		const options = normalizeBuildSystemPromptOptions({ cwd: "/tmp", customPrompt: "prompt" });
-		const snapshotModel = getModel("openai", "gpt-5.4");
+		const initial = prepareModelContextUpdate({
+			options,
+			tools: new Map([[firstTool.name, firstTool]]),
+		});
+		expect(initial.type).toBe("initial");
+
+		const addition = prepareModelContextUpdate({
+			options,
+			tools: new Map([
+				[firstTool.name, firstTool],
+				[secondTool.name, secondTool],
+			]),
+			previous: initial.state,
+		});
+		expect(addition).toMatchObject({ type: "incremental", toolsAdded: [secondTool], toolsRemoved: [] });
+
+		const removal = prepareModelContextUpdate({
+			options,
+			tools: new Map([[secondTool.name, secondTool]]),
+			previous: addition.state,
+		});
+		expect(removal).toMatchObject({ type: "incremental", toolsAdded: [], toolsRemoved: [firstTool] });
+	});
+
+	test("uses a full tool delta when a minimal delta would lose declaration order", () => {
+		const firstTool: Tool = {
+			name: "first_tool",
+			description: "first tool",
+			parameters: Type.Object({}),
+		};
+		const secondTool: Tool = {
+			name: "second_tool",
+			description: "second tool",
+			parameters: Type.Object({}),
+		};
+		const options = normalizeBuildSystemPromptOptions({ cwd: "/tmp", customPrompt: "prompt" });
 		const initial = prepareModelContextUpdate({
 			options,
 			tools: new Map([
 				[firstTool.name, firstTool],
 				[secondTool.name, secondTool],
 			]),
-			model: snapshotModel,
 		});
-		expect(initial.type).toBe("initial");
 
-		const removal = prepareModelContextUpdate({
+		const reordered = prepareModelContextUpdate({
 			options,
-			tools: new Map([[secondTool.name, secondTool]]),
+			tools: new Map([
+				[secondTool.name, secondTool],
+				[firstTool.name, firstTool],
+			]),
 			previous: initial.state,
-			model: snapshotModel,
 		});
-		expect(removal).toMatchObject({ type: "incremental", toolsAdded: [], toolsRemoved: [firstTool] });
 
-		const toolSearchOnlyModel = {
-			...snapshotModel,
-			provider: "openai-proxy",
-			compat: { supportsAdditionalTools: false, supportsToolSearch: true },
-		};
-		const fallbackRemoval = prepareModelContextUpdate({
-			options,
-			tools: new Map([[secondTool.name, secondTool]]),
-			previous: initial.state,
-			model: toolSearchOnlyModel,
+		expect(reordered).toMatchObject({
+			type: "incremental",
+			toolsAdded: [secondTool, firstTool],
+			toolsRemoved: [firstTool, secondTool],
 		});
-		expect(fallbackRemoval.type).toBe("replacement");
-	});
-
-	test("uses complete-state replacement when the model cannot change tools dynamically", () => {
-		const firstTool: Tool = {
-			name: "first_tool",
-			description: "first tool",
-			parameters: Type.Object({}),
-		};
-		const secondTool: Tool = {
-			name: "second_tool",
-			description: "second tool",
-			parameters: Type.Object({}),
-		};
-		const options = normalizeBuildSystemPromptOptions({ cwd: "/tmp", customPrompt: "prompt" });
-		for (const model of [getModel("mistral", "mistral-large-latest"), getModel("anthropic", "claude-opus-4-6")]) {
-			const initial = prepareModelContextUpdate({
-				options,
-				tools: new Map([[firstTool.name, firstTool]]),
-				model,
-			});
-			expect(initial.type).toBe("initial");
-
-			const addition = prepareModelContextUpdate({
-				options,
-				tools: new Map([
-					[firstTool.name, firstTool],
-					[secondTool.name, secondTool],
-				]),
-				previous: initial.state,
-				model,
-			});
-			expect(addition.type).toBe("replacement");
-
-			const removal = prepareModelContextUpdate({
-				options,
-				tools: new Map([[secondTool.name, secondTool]]),
-				previous: addition.state,
-				model,
-			});
-			expect(removal.type).toBe("replacement");
-		}
 	});
 });

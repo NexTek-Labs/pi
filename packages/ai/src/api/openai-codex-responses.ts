@@ -33,7 +33,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { getSystemMessageToolChange, hardFallbackSystemMessages } from "../utils/system-messages.ts";
+import { fallbackUnsupportedToolChanges } from "../utils/system-messages.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -535,15 +535,10 @@ function buildRequestBody(
 		: model.compat?.supportsToolSearch
 			? "tool-search"
 			: undefined;
-	const hasUnsupportedToolChange = context.messages.some((message) => {
-		if (message.role !== "system") return false;
-		const change = getSystemMessageToolChange(message);
-		return (
-			(change.added.length > 0 && deferredToolsMode === undefined) ||
-			(change.removed.length > 0 && deferredToolsMode !== "additional-tools")
-		);
-	});
-	const requestContext = hasUnsupportedToolChange ? hardFallbackSystemMessages(context) : context;
+	const requestContext = fallbackUnsupportedToolChanges(
+		context,
+		deferredToolsMode === "additional-tools" ? "all" : deferredToolsMode === "tool-search" ? "additions" : "none",
+	);
 	const toolPlacement =
 		deferredToolsMode === "additional-tools"
 			? { immediate: [], deferred: new Map<string, Tool>() }
