@@ -10,36 +10,26 @@ function prompt(value: string): SystemPromptPiece[] {
 }
 
 describe("diffSystemPrompts", () => {
-	test("renders semantic value replacements", () => {
-		const diff = diffSystemPrompts(prompt("<guidance>old</guidance>"), prompt("<guidance>new</guidance>"));
-
-		expect(diff).toEqual({
+	test("renders additions, replacements, and removals as superseding guidance", () => {
+		expect(diffSystemPrompts(prompt("old"), prompt("new"))).toEqual({
 			type: "update",
-			text: expect.stringContaining(
-				"<guidance>old</guidance>\n\nUse the following system guidance instead:\n\n<guidance>new</guidance>",
-			),
+			text: "The system guidance has changed. The following supersedes the previous system guidance:\n\nnew",
 		});
-	});
-
-	test("renders source-specific replacement guidance", () => {
-		const cases = [
+		expect(diffSystemPrompts([], [{ type: "value", key: "section:review_mode", text: "Review carefully." }])).toEqual(
 			{
-				key: "projectContext",
-				expected: "project context supersedes all previously supplied project-specific instructions",
+				type: "update",
+				text: "The following <review_mode> system guidance now applies:\n\nReview carefully.",
 			},
-			{ key: "skills", expected: "available skills have changed" },
-			{ key: "tools", expected: "available tool guidance has changed" },
-			{ key: "guidelines", expected: "operating guidelines have changed" },
-			{ key: "section:review_mode", expected: "<review_mode> system guidance has changed" },
-		];
-		for (const { key, expected } of cases) {
-			const diff = diffSystemPrompts([{ type: "value", key, text: "old" }], [{ type: "value", key, text: "new" }]);
-			expect(diff).toEqual({ type: "update", text: expect.stringContaining(expected) });
-			expect(diff.type === "update" ? diff.text : "").toContain("new");
-		}
+		);
+		expect(
+			diffSystemPrompts(
+				[{ type: "value", key: "skills", text: "old skills" }],
+				[{ type: "value", key: "skills", text: "" }],
+			),
+		).toEqual({ type: "update", text: "The previous skill guidance no longer applies." });
 	});
 
-	test("emits only strict line suffixes added to custom and appended base instructions", () => {
+	test("emits only strict line suffixes added to base instructions", () => {
 		const previous = buildSystemPromptPieces({
 			cwd: "/tmp",
 			customPrompt: "base instructions",
@@ -51,14 +41,13 @@ describe("diffSystemPrompts", () => {
 			appendSystemPrompt: "existing addition\nnew addition",
 		});
 
-		const diff = diffSystemPrompts(previous, current);
-		expect(diff).toEqual({
+		expect(diffSystemPrompts(previous, current)).toEqual({
 			type: "update",
 			text: "The following additional base system instructions now apply:\n\nnew addition",
 		});
 	});
 
-	test("replaces the prompt when custom or appended base instructions change non-additively", () => {
+	test("replaces base instructions after non-additive changes", () => {
 		const base = { cwd: "/tmp", customPrompt: "base instructions", appendSystemPrompt: "existing addition" };
 		for (const current of [
 			{ ...base, customPrompt: "changed instructions" },
@@ -72,45 +61,19 @@ describe("diffSystemPrompts", () => {
 		}
 	});
 
-	test("emits only strict line suffixes added to the prompt tail", () => {
+	test("only appends to prompt tails", () => {
 		const previous = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail" });
-		const current = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" });
-
-		expect(diffSystemPrompts(previous, current)).toEqual({
+		expect(
+			diffSystemPrompts(previous, buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail\nnew tail" })),
+		).toEqual({
 			type: "update",
 			text: "The following additional system guidance now applies:\n\nnew tail",
 		});
-	});
-
-	test("replaces the prompt when the prompt tail changes non-additively", () => {
-		const previous = buildSystemPromptPieces({ cwd: "/tmp", promptTail: "\nold tail" });
 		for (const promptTail of ["", "\nnew tail", "\ninserted\nold tail"]) {
 			expect(diffSystemPrompts(previous, buildSystemPromptPieces({ cwd: "/tmp", promptTail }))).toEqual({
 				type: "replace",
 			});
 		}
-	});
-
-	test("renders source-specific removal guidance", () => {
-		expect(
-			diffSystemPrompts(
-				[{ type: "value", key: "skills", text: "old skills" }],
-				[{ type: "value", key: "skills", text: "" }],
-			),
-		).toEqual({
-			type: "update",
-			text: "Skill guidance is no longer available. Do not use any previously listed skill.",
-		});
-	});
-
-	test("supports adding keyed guidance without changing the literal layout", () => {
-		const previous = prompt("same");
-		const current = [...previous, { type: "value" as const, key: "section:new", text: "new guidance" }];
-
-		expect(diffSystemPrompts(previous, current)).toEqual({
-			type: "update",
-			text: expect.stringContaining("new guidance"),
-		});
 	});
 
 	test("keeps remaining custom sections stable when an earlier section is removed", () => {
@@ -127,36 +90,27 @@ describe("diffSystemPrompts", () => {
 
 		expect(diffSystemPrompts(previous, current)).toEqual({
 			type: "update",
-			text: "The <first> system guidance no longer applies.",
+			text: "The previous <first> system guidance no longer applies.",
 		});
 	});
 
-	test("requires complete replacement when values move across literal boundaries", () => {
-		const previous = prompt("same");
-		const current: SystemPromptPiece[] = [previous[0], previous[2], previous[1]];
-
-		expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
-	});
-
-	test("requires complete replacement when existing values are reordered", () => {
-		const previous: SystemPromptPiece[] = [
-			{ type: "value", key: "first", text: "one" },
+	test("replaces structurally incompatible prompts", () => {
+		const base = prompt("same");
+		const reordered: SystemPromptPiece[] = [
 			{ type: "value", key: "second", text: "two" },
+			{ type: "value", key: "first", text: "one" },
 		];
-		const current = [previous[1], previous[0]];
+		const originalOrder = [reordered[1], reordered[0]];
+		const changedLiteral = prompt("same");
+		changedLiteral[0] = { type: "literal", text: "changed\n" };
 
-		expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
-	});
-
-	test("requires complete replacement when only value whitespace changes", () => {
-		expect(diffSystemPrompts(prompt("same"), prompt(" same "))).toEqual({ type: "replace" });
-	});
-
-	test("requires complete replacement when literals change", () => {
-		const previous = prompt("same");
-		const current = prompt("same");
-		current[0] = { type: "literal", text: "changed\n" };
-
-		expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
+		for (const [previous, current] of [
+			[base, [base[0], base[2], base[1]]],
+			[originalOrder, reordered],
+			[base, prompt(" same ")],
+			[base, changedLiteral],
+		] as Array<[SystemPromptPiece[], SystemPromptPiece[]]>) {
+			expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
+		}
 	});
 });

@@ -98,30 +98,19 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("custom sections", () => {
-		test("appends XML-wrapped sections in insertion order", () => {
-			const prompt = buildSystemPrompt({
-				cwd: process.cwd(),
-				sections: {
-					plan_mode: "Do not modify files.",
-					review_mode: "Review changes carefully.",
-				},
-			});
-
-			expect(prompt).toContain("<plan_mode>\nDo not modify files.\n</plan_mode>");
-			expect(prompt.indexOf("<plan_mode>")).toBeLessThan(prompt.indexOf("<review_mode>"));
-		});
-	});
-
-	describe("prompt tail", () => {
-		test("renders after cwd and custom sections", () => {
+		test("renders XML-wrapped sections in insertion order before the prompt tail", () => {
 			const prompt = buildSystemPrompt({
 				cwd: "/worktree",
-				sections: { review_mode: "Review carefully." },
+				sections: {
+					plan_mode: "Do not modify files.",
+					review_mode: "Review carefully.",
+				},
 				promptTail: "\n\nTail guidance.",
 			});
 
 			expect(prompt).toContain("Current working directory: /worktree");
-			expect(prompt).toContain("<review_mode>\nReview carefully.\n</review_mode>");
+			expect(prompt).toContain("<plan_mode>\nDo not modify files.\n</plan_mode>");
+			expect(prompt.indexOf("<plan_mode>")).toBeLessThan(prompt.indexOf("<review_mode>"));
 			expect(prompt.endsWith("</review_mode>\n\nTail guidance.")).toBe(true);
 		});
 	});

@@ -39,6 +39,12 @@ export type BuildSystemPromptInput = Pick<BuildSystemPromptOptions, "cwd"> &
 export type SystemPromptPiece = { type: "literal"; text: string } | { type: "value"; key: string; text: string };
 
 const SYSTEM_PROMPT_SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
+const SYSTEM_PROMPT_VALUE_SUBJECTS: Record<string, string> = {
+	projectContext: "project-specific instructions",
+	skills: "skill guidance",
+	tools: "available tool guidance",
+	guidelines: "operating guidelines",
+};
 
 /** Normalize prompt input into the mutable, collection-complete shape exposed to extensions. */
 export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptInput): BuildSystemPromptOptions {
@@ -320,39 +326,10 @@ function strictLineSuffixAddition(previous: string, current: string): string | u
 
 function renderSystemPromptValueUpdate(key: string, previous: string, current: string): string {
 	if (key === "cwd") return `The current working directory is now: ${current}`;
-	if (key === "projectContext") {
-		if (!current) return "Previously supplied project-specific instructions no longer apply.";
-		if (!previous) return `The following project-specific instructions now apply:\n\n${current}`;
-		return `Project-specific instructions have changed. The following project context supersedes all previously supplied project-specific instructions.\n\n${current}`;
-	}
-	if (key === "skills") {
-		if (!current) return "Skill guidance is no longer available. Do not use any previously listed skill.";
-		if (!previous) return `The following skill guidance is now available:\n\n${current}`;
-		return `The available skills have changed. This list supersedes the previous available skills list.\n\n${current}`;
-	}
-	if (key === "tools") {
-		return `The available tool guidance has changed. This list supersedes the previous available tools list.\n\nAvailable tools:\n${current}`;
-	}
-	if (key === "guidelines") {
-		return `The operating guidelines have changed. The following guidelines supersede the previous guidelines.\n\n${current}`;
-	}
-	if (key === "customPrompt") {
-		if (!current) return "The previously supplied custom system instructions no longer apply.";
-		if (!previous) return `The following custom system instructions now apply:\n\n${current}`;
-		return `The custom system instructions have changed. These instructions replace the previous custom system instructions.\n\n${current}`;
-	}
-	if (key === "appendSystemPrompt") {
-		if (!current) return "The previously appended system instructions no longer apply.";
-		if (!previous) return `The following additional system instructions now apply:\n\n${current}`;
-		return `The additional system instructions have changed. These instructions replace the previously appended system instructions.\n\n${current}`;
-	}
-	if (key.startsWith("section:")) {
-		const name = key.slice("section:".length);
-		if (!current) return `The <${name}> system guidance no longer applies.`;
-		if (!previous) return `The following <${name}> system guidance now applies:\n\n${current}`;
-		return `The <${name}> system guidance has changed. This section supersedes the previous <${name}> guidance.\n\n${current}`;
-	}
-	if (!previous) return `The following additional system guidance now applies:\n\n${current}`;
-	if (!current) return `The following previously supplied system guidance no longer applies:\n\n${previous}`;
-	return `The following previously supplied system guidance no longer applies:\n\n${previous}\n\nUse the following system guidance instead:\n\n${current}`;
+	const subject =
+		SYSTEM_PROMPT_VALUE_SUBJECTS[key] ??
+		(key.startsWith("section:") ? `<${key.slice("section:".length)}> system guidance` : "system guidance");
+	if (!current) return `The previous ${subject} no longer applies.`;
+	if (!previous) return `The following ${subject} now applies:\n\n${current}`;
+	return `The ${subject} has changed. The following supersedes the previous ${subject}:\n\n${current}`;
 }

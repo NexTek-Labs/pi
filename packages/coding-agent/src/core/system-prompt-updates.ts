@@ -71,25 +71,14 @@ interface ToolLoadoutChange {
 	removed: Tool[];
 }
 
-type IncrementalModelContextUpdate =
+export type PreparedModelContextUpdate =
+	| { type: "initial" | "unchanged" | "replacement"; state: ModelContextState }
 	| {
 			type: "incremental";
 			state: ModelContextState;
-			promptText: string;
-			toolChange?: ToolLoadoutChange;
-	  }
-	| {
-			type: "incremental";
-			state: ModelContextState;
-			promptText?: undefined;
+			promptText?: string;
 			toolChange: ToolLoadoutChange;
 	  };
-
-export type PreparedModelContextUpdate =
-	| { type: "initial"; state: ModelContextState }
-	| { type: "unchanged"; state: ModelContextState }
-	| IncrementalModelContextUpdate
-	| { type: "replacement"; state: ModelContextState };
 
 /** Convert an executable agent tool into the provider-independent declaration stored in prompt updates. */
 export function systemPromptTool(tool: AgentTool): Tool {
@@ -112,15 +101,15 @@ export function prepareModelContextUpdate(input: {
 	previous?: ModelContextState;
 	capabilities: ContextUpdateCapabilities;
 }): PreparedModelContextUpdate {
-	const pieces = buildSystemPromptPieces(input.options);
+	const { options, tools, previous, capabilities } = input;
+	const pieces = buildSystemPromptPieces(options);
 	const effective = renderSystemPrompt(pieces);
-	const previous = input.previous;
 	if (!previous) {
 		return {
 			type: "initial",
 			state: {
 				prompt: { pieces, effective, baseline: effective },
-				tools: { visible: input.tools, catalog: new Map(input.tools) },
+				tools: { visible: tools, catalog: new Map(tools) },
 			},
 		};
 	}
@@ -129,42 +118,41 @@ export function prepareModelContextUpdate(input: {
 		previous.prompt.effective === effective
 			? ({ type: "unchanged" } as const)
 			: diffSystemPrompts(previous.prompt.pieces, pieces);
-	const added = [...input.tools].filter(([name]) => !previous.tools.visible.has(name)).map(([, tool]) => tool);
-	const removed = [...previous.tools.visible].filter(([name]) => !input.tools.has(name)).map(([, tool]) => tool);
-	const declarationChanged = [...input.tools].some(([name, tool]) => {
+	const added = [...tools].filter(([name]) => !previous.tools.visible.has(name)).map(([, tool]) => tool);
+	const removed = [...previous.tools.visible].filter(([name]) => !tools.has(name)).map(([, tool]) => tool);
+	const declarationChanged = [...tools].some(([name, tool]) => {
 		const previousTool = previous.tools.visible.get(name) ?? previous.tools.catalog.get(name);
 		return previousTool !== undefined && !toolDeclarationsEqual(previousTool, tool);
 	});
 	const previousNames = [...previous.tools.visible.keys()];
-	const currentNames = [...input.tools.keys()];
+	const currentNames = [...tools.keys()];
 	const declarationOrderChanged =
 		added.length === 0 && removed.length === 0 && previousNames.some((name, index) => name !== currentNames[index]);
-	const toolsChanged = added.length > 0 || removed.length > 0 || declarationChanged || declarationOrderChanged;
 	const requiresReplacement =
 		promptDiff.type === "replace" ||
-		(input.options.forceSystemPrompt !== undefined && promptDiff.type !== "unchanged") ||
-		(promptDiff.type === "update" && input.capabilities.systemMessages === "none") ||
+		(options.forceSystemPrompt !== undefined && promptDiff.type !== "unchanged") ||
+		(promptDiff.type === "update" && capabilities.systemMessages === "none") ||
 		declarationChanged ||
 		declarationOrderChanged ||
-		(added.length > 0 && input.capabilities.toolAddition === "none") ||
-		(removed.length > 0 && input.capabilities.toolRemoval === "none");
+		(added.length > 0 && capabilities.toolAddition === "none") ||
+		(removed.length > 0 && capabilities.toolRemoval === "none");
 
 	if (requiresReplacement) {
 		return {
 			type: "replacement",
 			state: {
 				prompt: { pieces, effective, baseline: effective },
-				tools: { visible: input.tools, catalog: new Map(input.tools) },
+				tools: { visible: tools, catalog: new Map(tools) },
 			},
 		};
 	}
 
-	if (promptDiff.type === "unchanged" && !toolsChanged) {
+	if (promptDiff.type === "unchanged" && added.length === 0 && removed.length === 0) {
 		return {
 			type: "unchanged",
 			state: {
 				prompt: { pieces, effective, baseline: previous.prompt.baseline },
-				tools: { visible: input.tools, catalog: previous.tools.catalog },
+				tools: { visible: tools, catalog: previous.tools.catalog },
 			},
 		};
 	}
@@ -173,13 +161,14 @@ export function prepareModelContextUpdate(input: {
 	for (const tool of added) catalog.set(tool.name, tool);
 	const state: ModelContextState = {
 		prompt: { pieces, effective, baseline: previous.prompt.baseline },
-		tools: { visible: input.tools, catalog },
+		tools: { visible: tools, catalog },
 	};
-	const toolChange = added.length > 0 || removed.length > 0 ? { added, removed } : undefined;
-	if (promptDiff.type === "update") {
-		return { type: "incremental", state, promptText: promptDiff.text, toolChange };
-	}
-	return { type: "incremental", state, toolChange: { added, removed } };
+	return {
+		type: "incremental",
+		state,
+		promptText: promptDiff.type === "update" ? promptDiff.text : undefined,
+		toolChange: { added, removed },
+	};
 }
 
 /** Serialize one incremental prompt/tool transition into provider-independent context. */
@@ -188,21 +177,22 @@ export function createSystemPromptUpdateMessage(
 ): SystemMessage {
 	const content: Array<TextContent | ToolLoadoutContent> = [];
 	const text = update.promptText ? [update.promptText] : [];
-	if (update.toolChange) {
+	const { added, removed } = update.toolChange;
+	if (added.length > 0 || removed.length > 0) {
 		content.push({
 			type: "toolLoadout",
 			tools: [...update.state.tools.catalog.values()],
-			added: update.toolChange.added,
-			removed: update.toolChange.removed,
+			added,
+			removed,
 		});
-		if (update.toolChange.added.length > 0) {
+		if (added.length > 0) {
 			text.push(
-				`The following tools are now available and may be used: ${update.toolChange.added.map((tool) => tool.name).join(", ")}.`,
+				`The following tools are now available and may be used: ${added.map((tool) => tool.name).join(", ")}.`,
 			);
 		}
-		if (update.toolChange.removed.length > 0) {
+		if (removed.length > 0) {
 			text.push(
-				`The following tools are no longer available. Do not call them; such calls will be rejected: ${update.toolChange.removed.map((tool) => tool.name).join(", ")}.`,
+				`The following tools are no longer available. Do not call them; such calls will be rejected: ${removed.map((tool) => tool.name).join(", ")}.`,
 			);
 		}
 	}

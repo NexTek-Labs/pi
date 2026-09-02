@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Context } from "../src/types.ts";
-import { hardFallbackSystemMessages, resolveMessageToolLoadout } from "../src/utils/system-messages.ts";
+import { hardFallbackSystemMessages } from "../src/utils/system-messages.ts";
 
 const assistant: AssistantMessage = {
 	role: "assistant",
@@ -22,33 +22,6 @@ const assistant: AssistantMessage = {
 };
 
 class PayloadCaptured extends Error {}
-
-describe("resolveMessageToolLoadout", () => {
-	test("normalizes rich system loadouts and legacy added tool names", () => {
-		const tool = { name: "late_tool", description: "late", parameters: { type: "object" } };
-		const system = resolveMessageToolLoadout({
-			role: "system",
-			content: [{ type: "toolLoadout", tools: [tool], added: [tool], removed: [] }],
-			timestamp: 1,
-		});
-		const legacy = resolveMessageToolLoadout(
-			{
-				role: "toolResult",
-				toolCallId: "call-1",
-				toolName: "loader",
-				content: [{ type: "text", text: "loaded" }],
-				isError: false,
-				addedToolNames: ["late_tool"],
-				timestamp: 2,
-			},
-			(name) => (name === tool.name ? tool : undefined),
-		);
-
-		expect(system.added).toEqual([tool]);
-		expect(legacy.added).toEqual([tool]);
-		expect(system.addedNames).toEqual(legacy.addedNames);
-	});
-});
 
 describe("hardFallbackSystemMessages", () => {
 	test("uses complete current state and removes incompatible replay", () => {

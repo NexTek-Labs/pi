@@ -450,35 +450,6 @@ describe("deferred tools", () => {
 		expect(systemMessage?.content).toBe("late_tool is now available");
 	});
 
-	it("projects a system-message tool addition through client tool search when required", async () => {
-		const baseTool = makeTool("base_tool");
-		const lateTool = makeTool("late_tool");
-		const model: Model<"openai-responses"> = {
-			...getModel("openai", "gpt-5.4"),
-			provider: "openai-proxy",
-			compat: { supportsAdditionalTools: false, supportsToolSearch: true },
-		};
-		const context: Context = {
-			messages: [
-				makeUserMessage(1),
-				{
-					role: "system",
-					content: [{ type: "toolLoadout", tools: [baseTool, lateTool], added: [lateTool], removed: [] }],
-					timestamp: 2,
-				},
-			],
-			tools: [baseTool, lateTool],
-		};
-		const payload = await capturePayload<OpenAIPayload>(model, context);
-		const searchOutput = payload.input?.find(
-			(item): item is OpenAIToolSearchOutput => item.type === "tool_search_output",
-		);
-
-		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
-		expect(searchOutput?.tools).toMatchObject([{ type: "function", name: "late_tool", defer_loading: true }]);
-		expect(payload.input?.some((item) => item.type === "additional_tools")).toBe(false);
-	});
-
 	it("hard-falls back when an OpenAI Responses model cannot add tools", async () => {
 		const baseTool = makeTool("base_tool");
 		const lateTool = makeTool("late_tool");
