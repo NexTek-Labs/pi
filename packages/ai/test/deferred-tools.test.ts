@@ -421,6 +421,22 @@ describe("deferred tools", () => {
 		expect(payload.messages.some((message) => message.tools !== undefined)).toBe(false);
 	});
 
+	it("projects OpenAI Completions system updates as developer messages", async () => {
+		const model: Model<"openai-completions"> = {
+			...makeKimiModel(),
+			provider: "openai",
+			reasoning: true,
+			compat: { supportsDeveloperRole: true },
+		};
+		const context: Context = {
+			messages: [makeUserMessage(1), { role: "system", content: "updated instructions", timestamp: 2 }],
+		};
+		const payload = await capturePayload<KimiPayload>(model, context);
+
+		expect(payload.messages.map((message) => message.role)).toEqual(["user", "developer"]);
+		expect(payload.messages[1]?.content).toBe("updated instructions");
+	});
+
 	it("loads an OpenAI Responses tool from a provider-independent system message", async () => {
 		const lateTool = makeTool("late_tool");
 		const context: Context = {
@@ -441,13 +457,14 @@ describe("deferred tools", () => {
 		const additionalTools = payload.input?.find(
 			(item): item is OpenAIAdditionalTools => item.type === "additional_tools",
 		);
-		const systemMessage = payload.input?.find(
-			(item): item is OpenAISystemMessage => "role" in item && item.role === "system",
+		const instructionMessage = payload.input?.find(
+			(item): item is OpenAISystemMessage =>
+				"role" in item && (item.role === "system" || item.role === "developer") && "content" in item,
 		);
 
 		expect(openAIToolNames(payload)).toEqual(["base_tool"]);
 		expect(additionalTools?.tools).toMatchObject([{ type: "function", name: "late_tool" }]);
-		expect(systemMessage?.content).toBe("late_tool is now available");
+		expect(instructionMessage).toMatchObject({ role: "developer", content: "late_tool is now available" });
 	});
 
 	it("hard-falls back when an OpenAI Responses model cannot add tools", async () => {

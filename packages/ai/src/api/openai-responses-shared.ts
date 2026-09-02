@@ -177,11 +177,11 @@ export function convertResponsesMessages<TApi extends Api>(
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
+	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
+	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 	if (includeSystemPrompt && context.systemPrompt) {
-		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 		messages.push({
-			role,
+			role: instructionRole,
 			content: sanitizeSurrogates(context.systemPrompt),
 		});
 	}
@@ -229,7 +229,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			appendToolLoadout(resolveMessageToolLoadout(msg), `system:${msgIndex}`);
 			const text = getSystemMessageText(msg);
 			if (text.length > 0) {
-				messages.push({ role: "system", content: sanitizeSurrogates(text) });
+				messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
 			}
 		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {

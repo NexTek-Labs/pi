@@ -1212,10 +1212,9 @@ export function convertMessages(
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
 
+	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 	if (context.systemPrompt) {
-		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
-		const role = useDeveloperRole ? "developer" : "system";
-		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
+		params.push({ role: instructionRole, content: sanitizeSurrogates(context.systemPrompt) });
 	}
 
 	let lastRole: string | null = null;
@@ -1249,7 +1248,7 @@ export function convertMessages(
 			}
 			const text = getSystemMessageText(msg);
 			if (text.length > 0) {
-				params.push({ role: "system", content: sanitizeSurrogates(text) });
+				params.push({ role: instructionRole, content: sanitizeSurrogates(text) });
 			}
 		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
