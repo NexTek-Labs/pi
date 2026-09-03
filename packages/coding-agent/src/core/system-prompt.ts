@@ -123,9 +123,9 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 	const promptCwd = cwd.replace(/\\/g, "/");
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 	const projectContext = renderProjectContext(contextFiles);
+	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
 
 	if (customPrompt) {
-		const customPromptHasRead = selectedTools.includes("read");
 		const pieces: SystemPromptPiece[] = [
 			{ type: "value", key: "customPrompt", text: customPrompt },
 			{ type: "value", key: "appendSystemPrompt", text: appendSection },
@@ -133,7 +133,7 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 			{
 				type: "value",
 				key: "skills",
-				text: customPromptHasRead && skills.length > 0 ? formatSkillsForPrompt(skills) : "",
+				text: skillFileReadTool && skills.length > 0 ? formatSkillsForPrompt(skills, skillFileReadTool) : "",
 			},
 			{ type: "literal", text: "\nCurrent working directory: " },
 			{ type: "value", key: "cwd", text: promptCwd },
@@ -165,7 +165,6 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 	const hasGrep = selectedTools.includes("grep");
 	const hasFind = selectedTools.includes("find");
 	const hasLs = selectedTools.includes("ls");
-	const hasRead = selectedTools.includes("read");
 
 	if ((hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs) {
 		if (hasBash && hasPowerShell) {
@@ -213,7 +212,11 @@ export function buildSystemPromptPieces(input: BuildSystemPromptInput): SystemPr
 		},
 		{ type: "value", key: "appendSystemPrompt", text: appendSection },
 		{ type: "value", key: "projectContext", text: projectContext },
-		{ type: "value", key: "skills", text: hasRead && skills.length > 0 ? formatSkillsForPrompt(skills) : "" },
+		{
+			type: "value",
+			key: "skills",
+			text: skillFileReadTool && skills.length > 0 ? formatSkillsForPrompt(skills, skillFileReadTool) : "",
+		},
 		{ type: "literal", text: "\nCurrent working directory: " },
 		{ type: "value", key: "cwd", text: promptCwd },
 	];
