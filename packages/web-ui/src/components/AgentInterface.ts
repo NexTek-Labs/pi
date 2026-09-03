@@ -1,4 +1,4 @@
-import { streamSimple, type ToolResultMessage, type Usage } from "@earendil-works/pi-ai";
+import { getProviders, streamSimple, type ToolResultMessage, type Usage } from "@earendil-works/pi-ai";
 import { html, LitElement } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.ts";
@@ -17,8 +17,13 @@ import { createStreamFn } from "../utils/proxy-utils.ts";
 import type { UserMessageWithAttachments } from "./Messages.ts";
 import type { StreamingMessageContainer } from "./StreamingMessageContainer.ts";
 
-/** Look up a custom provider by its display name (which doubles as `Model.provider`). */
+/**
+ * Look up a custom provider by its display name (which doubles as `Model.provider`).
+ * A built-in provider name is never treated as custom: a custom provider named "openai"
+ * must not suppress the real provider's key prompt or hand its key to cloud traffic.
+ */
 async function findCustomProvider(name: string): Promise<CustomProvider | undefined> {
+	if ((getProviders() as string[]).includes(name)) return undefined;
 	const providers = await getAppStorage().customProviders.getAll();
 	return providers.find((p) => p.name === name);
 }
@@ -156,7 +161,7 @@ export class AgentInterface extends LitElement {
 				if (key) return key;
 				// Custom providers store their (optional) key on the provider record
 				const custom = await findCustomProvider(provider);
-				return custom?.apiKey ?? undefined;
+				return custom?.apiKey || undefined;
 			};
 		}
 
