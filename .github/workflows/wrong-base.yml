@@ -1,0 +1,18 @@
+name: wrong-base
+
+# This fork's base branch is web-ui-base (pi main removed packages/web-ui). The other
+# workflows filter on web-ui-base, so a pull request opened against main would run no
+# checks at all and look clean. Fail it loudly instead.
+# Advisor point 2, consultation SGNEX-ADVISOR-0903-heron.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  wrong-base:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::Pull requests in this fork target web-ui-base, not main - see sitegeist-nex/docs/WORKFLOW.md"
+          exit 1

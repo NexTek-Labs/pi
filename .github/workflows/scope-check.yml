@@ -1,0 +1,35 @@
+name: scope-check
+
+# Enforces two rules from docs/WORKFLOW.md that used to be prose only:
+#   1. A PR must not touch files outside the "Scope" of the ticket it closes.
+#   2. A risk-zone ticket needs a human approval before it can merge.
+# A rule nobody enforces is a convention, not a guarantee. This is the enforcement.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+    branches: [web-ui-base]
+  # Reviews must re-trigger the check, otherwise the risk-zone gate stays red
+  # forever even after someone approves.
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  scope-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check file scope and the risk-zone human gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HUMAN_APPROVERS: RaphWind
+        run: python3 .github/scripts/scope_check.py

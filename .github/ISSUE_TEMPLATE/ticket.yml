@@ -1,0 +1,111 @@
+name: Ticket (work order for the agent-coder)
+description: A work order the agent-coder can pick up. Required fields are the ones CI actually reads.
+title: "[ticket] "
+labels: ["ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is not ceremony — the `scope-check` workflow reads **Scope — files the agent-coder may edit**
+        and **Risk zone** straight out of this issue. Fill them loosely and the PR goes red without
+        waiting for a reviewer to notice.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One sentence — what must be true when this is done, not how to do it. Never "make it better".
+      placeholder: Custom-provider models appear in the model selector and their stored key is sent.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope_write
+    attributes:
+      label: Scope — files the agent-coder may edit
+      description: |
+        One path or glob per line. `*` does not cross `/`; `**` does.
+        CI rejects any PR that touches a file outside this list.
+      placeholder: |
+        packages/web-ui/src/dialogs/ModelSelector.ts
+        packages/web-ui/CHANGELOG.md
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope_read
+    attributes:
+      label: Scope — read-only context
+      description: Files to read before starting, but never edit.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: pass
+    attributes:
+      label: Pass conditions
+      description: Every line must be machine-checkable. If a line needs human judgement, the ticket is not finished.
+      placeholder: |
+        - [ ] `npm run check` in packages/web-ui exits 0
+        - [ ] `npm run build` in packages/web-ui exits 0 and dist/index.js exports ProvidersModelsTab
+    validations:
+      required: true
+
+  - type: textarea
+    id: verify
+    attributes:
+      label: Verification commands
+      description: The agent-coder runs these and pastes the real output into a PR comment. The reviewer reruns them and does not trust the pasted output.
+      render: bash
+    validations:
+      required: true
+
+  - type: input
+    id: docs
+    attributes:
+      label: Governing document
+      description: Path to the spec or style this work must match. Do not invent a new style.
+      placeholder: AGENTS.md (this fork) · sitegeist-nex/docs/WORKFLOW.md
+    validations:
+      required: false
+
+  - type: dropdown
+    id: risky
+    attributes:
+      label: Risk zone
+      description: |
+        Zones that **fail silently** — a leaked provider key, a wrong write into honcho/gbrain, a
+        widened extension permission: none of them turns a test red. See "Risk zones in this
+        workspace" in docs/WORKFLOW.md. Choosing "Yes" keeps the PR red until a human approves it.
+      options:
+        - "No — ordinary zone"
+        - "Yes — credentials / memory write-path / extension permissions"
+    validations:
+      required: true
+
+  - type: input
+    id: coach_model
+    attributes:
+      label: Written by
+      description: |
+        The exact model string of the agent-coach that wrote this ticket, plus its harness —
+        e.g. `claude-fable-5-1 · claude-code`. Not decoration: a rejection is a fact about the pair
+        of models at both ends, so the brief has to carry one too. See "Attribution" in
+        docs/WORKFLOW.md.
+      placeholder: claude-fable-5-1 · claude-code
+    validations:
+      required: true
+
+  - type: input
+    id: handle
+    attributes:
+      label: Session handle
+      description: |
+        Not ceremony — this is the string used with `grep -c` to prove the prompt actually reached
+        the session. First delivery fails often, and a live process with a moving mtime is not
+        evidence that the work was received.
+      placeholder: PRIME-42-lagoon
+    validations:
+      required: true
