@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import type { SystemMessage, Tool } from "@earendil-works/pi-ai/compat";
+import { consolidateSystemMessages, type SystemMessage, type Tool } from "@earendil-works/pi-ai/compat";
 import {
 	type BuildSystemPromptOptions,
 	buildSystemPromptPieces,
@@ -149,30 +149,17 @@ export function createSystemPromptUpdateMessage(
 	};
 }
 
-/** Remove chronological updates and provider-bound reasoning before complete-state replacement. */
+/** Remove chronological updates and provider-bound replay data before complete-state replacement. */
 export function consolidateSystemPromptMessages(messages: readonly AgentMessage[]): AgentMessage[] {
-	return messages
-		.filter((message) => message.role !== "system")
-		.map((message) => {
-			if (message.role === "toolResult" && message.addedToolNames !== undefined) {
-				const toolResult = { ...message };
-				delete toolResult.addedToolNames;
-				return toolResult;
-			}
-			if (message.role !== "assistant") return message;
-			return {
-				...message,
-				content: message.content.flatMap((block) => {
-					if (block.type === "thinking") {
-						return block.thinking.trim().length > 0 ? [{ type: "text" as const, text: block.thinking }] : [];
-					}
-					if (block.type === "toolCall" && block.thoughtSignature !== undefined) {
-						const toolCall = { ...block };
-						delete toolCall.thoughtSignature;
-						return [toolCall];
-					}
-					return [block];
-				}),
-			};
-		});
+	return messages.flatMap<AgentMessage>((message) => {
+		switch (message.role) {
+			case "system":
+			case "user":
+			case "assistant":
+			case "toolResult":
+				return consolidateSystemMessages([message]);
+			default:
+				return [message];
+		}
+	});
 }

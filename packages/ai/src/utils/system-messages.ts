@@ -40,19 +40,9 @@ export function resolveMessageToolChange(
 	return { added: [], removed: [], addedNames: [] };
 }
 
-/** Fold transcript system updates into complete top-level state for providers without native support. */
-export function hardFallbackSystemMessages(context: Context): Context {
-	const systemMessages = context.messages.filter((message) => message.role === "system");
-	if (systemMessages.length === 0) return context;
-
-	let systemPrompt = context.effectiveSystemPrompt ?? context.systemPrompt ?? "";
-	if (context.effectiveSystemPrompt === undefined) {
-		const appendedGuidance = systemMessages.map(getSystemMessageText).filter((text) => text.length > 0);
-		if (appendedGuidance.length > 0) {
-			systemPrompt = [systemPrompt, ...appendedGuidance].filter((text) => text.length > 0).join("\n\n");
-		}
-	}
-	const messages = context.messages
+/** Remove chronological updates and provider-bound replay data before complete-state replacement. */
+export function consolidateSystemMessages(messages: readonly Message[]): Message[] {
+	return messages
 		.filter((message) => message.role !== "system")
 		.map((message) => {
 			if (message.role === "toolResult" && message.addedToolNames !== undefined) {
@@ -76,6 +66,21 @@ export function hardFallbackSystemMessages(context: Context): Context {
 				}),
 			};
 		});
+}
+
+/** Fold transcript system updates into complete top-level state for providers without native support. */
+export function hardFallbackSystemMessages(context: Context): Context {
+	const systemMessages = context.messages.filter((message) => message.role === "system");
+	if (systemMessages.length === 0) return context;
+
+	let systemPrompt = context.effectiveSystemPrompt ?? context.systemPrompt ?? "";
+	if (context.effectiveSystemPrompt === undefined) {
+		const appendedGuidance = systemMessages.map(getSystemMessageText).filter((text) => text.length > 0);
+		if (appendedGuidance.length > 0) {
+			systemPrompt = [systemPrompt, ...appendedGuidance].filter((text) => text.length > 0).join("\n\n");
+		}
+	}
+	const messages = consolidateSystemMessages(context.messages);
 	return { ...context, systemPrompt, effectiveSystemPrompt: systemPrompt, messages };
 }
 

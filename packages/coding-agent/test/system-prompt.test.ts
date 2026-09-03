@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import { buildSystemPrompt, normalizeBuildSystemPromptOptions } from "../src/core/system-prompt.ts";
 
 const testSkill: Skill = {
 	name: "test-skill",
@@ -153,6 +153,15 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("skills", () => {
+		test("clones skill objects before exposing prompt options", () => {
+			const skill = { ...testSkill };
+			const options = normalizeBuildSystemPromptOptions({ cwd: process.cwd(), skills: [skill] });
+			options.skills[0].description = "Changed description";
+			options.skills[0].disableModelInvocation = true;
+
+			expect(skill).toMatchObject({ description: "A test skill.", disableModelInvocation: false });
+		});
+
 		test.each([
 			{ name: "default prompt", customPrompt: undefined },
 			{ name: "custom prompt", customPrompt: "Custom system prompt" },

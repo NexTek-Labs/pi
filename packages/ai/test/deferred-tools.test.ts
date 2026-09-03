@@ -645,6 +645,43 @@ describe("deferred tools", () => {
 		expect(openAIToolNames(payload)).toEqual([]);
 	});
 
+	it("keeps tools used before their addition marker in the initial Responses snapshot", async () => {
+		const lateTool = makeTool("late_tool");
+		const lateCall: AssistantMessage = {
+			...makeAssistantToolCall(),
+			content: [{ type: "toolCall", id: "call_late|fc_late", name: "late_tool", arguments: {} }],
+			api: "openai-responses",
+			provider: "openai",
+			model: "gpt-5.4",
+		};
+		const context: Context = {
+			messages: [
+				makeUserMessage(1),
+				lateCall,
+				{
+					...makeToolResult(["late_tool"]),
+					toolCallId: "call_late|fc_late",
+					toolName: "late_tool",
+				},
+			],
+			tools: [lateTool],
+		};
+		const payloads = await Promise.all([
+			capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context),
+			capturePayload<OpenAIPayload>(getModel("openai-codex", "gpt-5.6-sol"), context, makeCodexToken()),
+		]);
+
+		for (const payload of payloads) {
+			const initialSnapshotIndex = (payload.input ?? []).findIndex(isOpenAIAdditionalTools);
+			const lateCallIndex = (payload.input ?? []).findIndex(
+				(item) => item.type === "function_call" && item.name === "late_tool",
+			);
+
+			expect(additionalToolSnapshots(payload)).toEqual([["late_tool"]]);
+			expect(initialSnapshotIndex).toBeLessThan(lateCallIndex);
+		}
+	});
+
 	it("falls back to client tool search when additional_tools is unsupported", async () => {
 		const model: Model<"openai-responses"> = {
 			...getModel("openai", "gpt-5.4"),

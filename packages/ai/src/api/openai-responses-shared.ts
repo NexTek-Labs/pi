@@ -188,11 +188,29 @@ function createAdditionalToolsState(
 	}
 	for (const tool of currentTools ?? []) catalog.set(tool.name, tool);
 
+	const usedToolNamesBeforeAdditions = new Map<number, Set<string>>();
+	const usedToolNames = new Set<string>();
+	for (let index = 0; index < messages.length; index++) {
+		const message = messages[index];
+		const change = resolveMessageToolChange(message, (name) => catalog.get(name));
+		if (change.addedNames.length > 0) {
+			usedToolNamesBeforeAdditions.set(index, new Set(usedToolNames));
+		}
+		if (message.role === "assistant") {
+			for (const block of message.content) {
+				if (block.type === "toolCall") usedToolNames.add(block.name);
+			}
+		}
+	}
+
 	const tools = new Map<string, Tool>();
 	for (const tool of currentTools ?? []) tools.set(tool.name, tool);
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const change = resolveMessageToolChange(messages[index], (name) => catalog.get(name));
-		for (const name of change.addedNames) tools.delete(name);
+		const usedBeforeAddition = usedToolNamesBeforeAdditions.get(index);
+		for (const name of change.addedNames) {
+			if (!usedBeforeAddition?.has(name)) tools.delete(name);
+		}
 		for (const tool of change.removed) tools.set(tool.name, tool);
 	}
 	return { tools, catalog };

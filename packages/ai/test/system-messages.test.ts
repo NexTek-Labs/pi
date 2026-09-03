@@ -2,7 +2,11 @@ import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Context, Tool } from "../src/types.ts";
-import { fallbackUnsupportedToolChanges, hardFallbackSystemMessages } from "../src/utils/system-messages.ts";
+import {
+	consolidateSystemMessages,
+	fallbackUnsupportedToolChanges,
+	hardFallbackSystemMessages,
+} from "../src/utils/system-messages.ts";
 
 const assistant: AssistantMessage = {
 	role: "assistant",
@@ -59,6 +63,28 @@ describe("hardFallbackSystemMessages", () => {
 			expect.objectContaining({ role: "toolResult" }),
 		]);
 		expect(fallback.messages[1]).not.toHaveProperty("addedToolNames");
+	});
+
+	test("consolidates chronological updates and provider replay data", () => {
+		const messages = consolidateSystemMessages([
+			assistant,
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "loader",
+				content: [{ type: "text", text: "loaded" }],
+				isError: false,
+				timestamp: 2,
+				addedToolNames: ["late_tool"],
+			},
+			{ role: "system", content: "changed", timestamp: 3 },
+		]);
+
+		expect(messages).toEqual([
+			expect.objectContaining({ role: "assistant", content: [{ type: "text", text: "reasoning" }] }),
+			expect.objectContaining({ role: "toolResult" }),
+		]);
+		expect(messages[1]).not.toHaveProperty("addedToolNames");
 	});
 
 	test("preserves provider replay data when no fallback is needed", () => {

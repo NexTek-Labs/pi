@@ -62,7 +62,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptInput)
 		sections: { ...(input.sections ?? {}) },
 		cwd: input.cwd,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
-		skills: [...(input.skills ?? [])],
+		skills: (input.skills ?? []).map((skill) => ({ ...skill })),
 	};
 }
 
