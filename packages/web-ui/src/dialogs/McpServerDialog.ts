@@ -31,7 +31,8 @@ function isHttpUrl(value: string): boolean {
  * *names* only, each row's value input starts empty and shows `(unchanged)`,
  * and saving an empty value keeps what is stored. A value can therefore never
  * be displayed and never be blanked by an edit — deleting a header means
- * removing its row. Typing a value replaces it. Values are trimmed, so a
+ * removing its row, and saving confirms that first because the stored value
+ * goes with the row. Typing a value replaces it. Values are trimmed, so a
  * whitespace-only value counts as empty, and two rows for the same header
  * (compared case-insensitively) are rejected rather than resolved last-wins.
  */
@@ -114,7 +115,7 @@ export class McpServerDialog extends DialogBase {
 				continue; // an untouched blank row is not a header
 			}
 			if (!key) {
-				alert(i18n("Please fill in all required fields"));
+				alert("A header row needs a name. Name the row or remove it.");
 				return;
 			}
 			rows.push({ key, value });
@@ -126,17 +127,28 @@ export class McpServerDialog extends DialogBase {
 			const lower = row.key.toLowerCase();
 			if (seen.has(lower)) {
 				// Two rows for one header are never resolved by last-wins.
-				alert(i18n("Please fill in all required fields"));
+				alert(`Duplicate header "${row.key}". Keep one row for it.`);
 				return;
 			}
 			seen.add(lower);
 			// An empty value keeps the stored one; a header that is new must carry a value.
 			const value = row.value || this.storedValue(row.key);
 			if (!value) {
-				alert(i18n("Please fill in all required fields"));
+				alert(`Header "${row.key}" is new, so it needs a value.`);
 				return;
 			}
 			headers[row.key] = value;
+		}
+
+		// Removing a row deletes that header, and with it the stored value the dialog never shows.
+		// Name every header that is about to lose its value and let the user stop the save.
+		for (const storedName of this.entry?.headers ? Object.keys(this.entry.headers) : []) {
+			if (seen.has(storedName.toLowerCase())) {
+				continue;
+			}
+			if (!confirm(`Remove header ${storedName}? Its stored value will be deleted.`)) {
+				return;
+			}
 		}
 
 		const entry: McpServerEntry = {
@@ -178,6 +190,8 @@ export class McpServerDialog extends DialogBase {
 									placeholder: "Header name",
 									onInput: (e: Event) => {
 										row.key = (e.target as HTMLInputElement).value;
+										// The value placeholder depends on this key, so re-render to refresh it.
+										this.requestUpdate();
 									},
 								})}
 							</div>
@@ -272,7 +286,8 @@ export class McpServerDialog extends DialogBase {
 							${Label({ children: "Headers" })}
 							<p class="text-xs text-muted-foreground">
 								Values are never shown after saving. Leave a value empty to keep the stored one, type to replace
-								it, and remove the row to delete the header.
+								it, and remove the row to delete the header — saving asks first, because the stored value goes
+								with the row.
 							</p>
 							${this.renderHeaderRows()}
 						</div>
