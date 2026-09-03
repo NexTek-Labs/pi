@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a browser-safe MCP client for the Streamable HTTP transport (`McpHttpClient`) plus `createMcpTools()`, which turns a server's `tools/list` into `AgentTool`s the agent loop can run unchanged ([#5](https://github.com/NexTek-Labs/pi/issues/5)).
+
 ### Changed
 
 - Changed source syntax to avoid TypeScript constructs that require JavaScript emit, keeping the package compatible with Node.js strip-only TypeScript checks.
