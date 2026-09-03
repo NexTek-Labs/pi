@@ -33,7 +33,12 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText, resolveMessageToolChange } from "../utils/system-messages.ts";
+import {
+	fallbackUnsupportedToolChanges,
+	getSystemMessageText,
+	hardFallbackSystemMessages,
+	resolveMessageToolChange,
+} from "../utils/system-messages.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -118,11 +123,13 @@ export interface OpenAIResponsesStreamOptions {
 	) => void;
 }
 
+export type ResponsesDeferredToolsMode = "additional-tools" | "tool-search";
+
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	deferredTools?: ReadonlyMap<string, Tool>;
-	deferredToolsMode?: "additional-tools" | "tool-search";
+	deferredToolsMode?: ResponsesDeferredToolsMode;
 	toolOptions?: ConvertResponsesToolsOptions;
 }
 
@@ -131,6 +138,40 @@ export interface ConvertResponsesToolsOptions {
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
 	deferLoading?: boolean;
+}
+
+/** Select native tool updates or complete-state fallback for a Responses request. */
+export function prepareResponsesToolContext(
+	context: Context,
+	options: {
+		supportsAdditionalTools: boolean;
+		supportsToolSearch: boolean;
+		requiresTopLevelTools: boolean;
+	},
+): { context: Context; deferredToolsMode?: ResponsesDeferredToolsMode } {
+	const deferredToolsMode = options.requiresTopLevelTools
+		? undefined
+		: options.supportsAdditionalTools
+			? "additional-tools"
+			: options.supportsToolSearch
+				? "tool-search"
+				: undefined;
+	if (
+		options.requiresTopLevelTools &&
+		context.messages.some((message) => {
+			const change = resolveMessageToolChange(message);
+			return change.addedNames.length > 0 || change.removed.length > 0;
+		})
+	) {
+		return { context: hardFallbackSystemMessages(context) };
+	}
+	return {
+		context: fallbackUnsupportedToolChanges(
+			context,
+			deferredToolsMode === "additional-tools" ? "all" : deferredToolsMode === "tool-search" ? "additions" : "none",
+		),
+		deferredToolsMode,
+	};
 }
 
 /** Rewind the final tool checkpoint so Responses can replay complete replacement snapshots chronologically. */

@@ -152,6 +152,11 @@ describe("openai-responses provider defaults", () => {
 			tool_choice: "required",
 			tools: [expect.objectContaining({ name: "ping" })],
 		});
+		expect(
+			(capturedPayload as { input?: Array<{ type?: string }> }).input?.some(
+				(item) => item.type === "additional_tools",
+			),
+		).toBe(false);
 	});
 
 	it("sets strict mode explicitly for Cloudflare OpenAI Responses tools", async () => {

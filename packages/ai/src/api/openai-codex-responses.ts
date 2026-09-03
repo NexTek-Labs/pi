@@ -33,11 +33,15 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { fallbackUnsupportedToolChanges } from "../utils/system-messages.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	prepareResponsesToolContext,
+	processResponsesStream,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================
@@ -530,15 +534,11 @@ function buildRequestBody(
 ): RequestBody {
 	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
-	const deferredToolsMode = model.compat?.supportsAdditionalTools
-		? "additional-tools"
-		: model.compat?.supportsToolSearch
-			? "tool-search"
-			: undefined;
-	const requestContext = fallbackUnsupportedToolChanges(
-		context,
-		deferredToolsMode === "additional-tools" ? "all" : deferredToolsMode === "tool-search" ? "additions" : "none",
-	);
+	const { context: requestContext, deferredToolsMode } = prepareResponsesToolContext(context, {
+		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
+		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
+		requiresTopLevelTools: options?.toolChoice === "required",
+	});
 	const toolPlacement =
 		deferredToolsMode === "additional-tools"
 			? { immediate: [], deferred: new Map<string, Tool>() }

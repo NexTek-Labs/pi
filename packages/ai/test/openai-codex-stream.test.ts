@@ -810,11 +810,14 @@ describe("openai-codex streaming", () => {
 		const encoder = new TextEncoder();
 		const sse = buildSSEPayload({ status: "completed" });
 		let requestedToolChoice: unknown;
+		let requestedTools: unknown;
 
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (_input: string | URL, init?: RequestInit) => {
-				requestedToolChoice = decodeCodexRequestBody(init?.body)?.tool_choice;
+				const body = decodeCodexRequestBody(init?.body);
+				requestedToolChoice = body?.tool_choice;
+				requestedTools = body?.tools;
 				return new Response(
 					new ReadableStream<Uint8Array>({
 						start(controller) {
@@ -838,6 +841,7 @@ describe("openai-codex streaming", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 400000,
 			maxTokens: 128000,
+			compat: { supportsAdditionalTools: true },
 		};
 
 		await streamOpenAICodexResponses(
@@ -858,6 +862,7 @@ describe("openai-codex streaming", () => {
 		).result();
 
 		expect(requestedToolChoice).toBe("required");
+		expect(requestedTools).toEqual([expect.objectContaining({ name: "ping" })]);
 	});
 
 	it("sets Codex strict mode explicitly and honors constrained sampling", async () => {

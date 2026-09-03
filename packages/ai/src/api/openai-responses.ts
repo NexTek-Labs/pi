@@ -23,11 +23,15 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { fallbackUnsupportedToolChanges } from "../utils/system-messages.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	prepareResponsesToolContext,
+	processResponsesStream,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -272,15 +276,12 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const deferredToolsMode = compat.supportsAdditionalTools
-		? "additional-tools"
-		: compat.supportsToolSearch
-			? "tool-search"
-			: undefined;
-	const requestContext = fallbackUnsupportedToolChanges(
-		context,
-		deferredToolsMode === "additional-tools" ? "all" : deferredToolsMode === "tool-search" ? "additions" : "none",
-	);
+	const { context: requestContext, deferredToolsMode } = prepareResponsesToolContext(context, {
+		supportsAdditionalTools: compat.supportsAdditionalTools,
+		supportsToolSearch: compat.supportsToolSearch,
+		requiresTopLevelTools:
+			options?.toolChoice === "required" || (typeof options?.toolChoice === "object" && options.toolChoice !== null),
+	});
 	const toolPlacement =
 		deferredToolsMode === "additional-tools"
 			? { immediate: [], deferred: new Map<string, Tool>() }
