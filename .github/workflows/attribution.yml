@@ -1,0 +1,59 @@
+name: attribution
+
+# Every commit, pull request and ticket must say which model produced it.
+#
+# This is enforced rather than trusted because the queries in docs/WORKFLOW.md
+# sum lines per model: a history where most commits are labelled and a few are
+# not does not report "some data is missing", it reports a smaller number,
+# confidently. A half-labelled history is worse than an unlabelled one.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+    branches: [web-ui-base]
+  # The pull-request job cannot see a squash. It runs against commits that stop
+  # existing the moment the squashed one lands, and GitHub's squash appends
+  # `Co-authored-by:` after a blank line, which ends the trailer block and hides
+  # Role/Model/Harness from %(trailers). That happened to a438457 (#51). The
+  # window is between the last green check and the commit on main, so the audit
+  # runs again on the other side of it.
+  push:
+    branches: [web-ui-base]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit messages are the subject of this check, so the history
+          # containing them has to be present. The default shallow clone is not.
+          fetch-depth: 0
+
+      - name: Fetch notes
+        # Pre-convention commits are labelled with `git notes`, which a clone
+        # does not fetch. Without this the push job reads a history that looks
+        # unlabelled and fails confidently on correct work.
+        if: github.event_name == 'push'
+        run: git fetch origin 'refs/notes/*:refs/notes/*'
+
+      - name: Fetch upstream
+        # A fork: commits reachable from upstream are not ours to label.
+        if: github.event_name == 'push'
+        run: git remote add upstream https://github.com/earendil-works/pi.git && git fetch --no-tags upstream main
+
+      - name: Check that every artifact names its model
+        env:
+          UPSTREAM_REF: upstream/main
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/attribution_check.py
