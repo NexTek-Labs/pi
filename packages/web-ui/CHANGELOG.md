@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Custom providers no longer trigger the API-key prompt on send; the default `getApiKey` now falls back to the key stored on the custom provider record.
+
+### Changed
+
+- `ProvidersModelsTab.renderKnownProviders()` / `renderCustomProviders()` are now `protected` so host apps can compose their own settings tab from the two sections.
+
 ## [0.75.3] - 2026-05-18
 
 ## [0.75.2] - 2026-05-18

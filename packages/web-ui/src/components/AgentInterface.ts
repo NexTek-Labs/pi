@@ -9,12 +9,19 @@ import "./Messages.ts"; // Import for side effects to register the custom elemen
 import { getAppStorage } from "../storage/app-storage.ts";
 import "./StreamingMessageContainer.ts";
 import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
+import type { CustomProvider } from "../storage/stores/custom-providers-store.ts";
 import type { Attachment } from "../utils/attachment-utils.ts";
 import { formatUsage } from "../utils/format.ts";
 import { i18n } from "../utils/i18n.ts";
 import { createStreamFn } from "../utils/proxy-utils.ts";
 import type { UserMessageWithAttachments } from "./Messages.ts";
 import type { StreamingMessageContainer } from "./StreamingMessageContainer.ts";
+
+/** Look up a custom provider by its display name (which doubles as `Model.provider`). */
+async function findCustomProvider(name: string): Promise<CustomProvider | undefined> {
+	const providers = await getAppStorage().customProviders.getAll();
+	return providers.find((p) => p.name === name);
+}
 
 @customElement("agent-interface")
 export class AgentInterface extends LitElement {
@@ -146,7 +153,10 @@ export class AgentInterface extends LitElement {
 		if (!this.session.getApiKey) {
 			this.session.getApiKey = async (provider: string) => {
 				const key = await getAppStorage().providerKeys.get(provider);
-				return key ?? undefined;
+				if (key) return key;
+				// Custom providers store their (optional) key on the provider record
+				const custom = await findCustomProvider(provider);
+				return custom?.apiKey ?? undefined;
 			};
 		}
 
@@ -222,8 +232,9 @@ export class AgentInterface extends LitElement {
 		const provider = session.state.model.provider;
 		const apiKey = await getAppStorage().providerKeys.get(provider);
 
-		// If no API key, prompt for it
-		if (!apiKey) {
+		// If no API key, prompt for it. Custom providers (local servers, self-hosted
+		// endpoints) carry their own optional key and must never trigger the prompt.
+		if (!apiKey && !(await findCustomProvider(provider))) {
 			if (!this.onApiKeyRequired) {
 				console.error("No API key configured and no onApiKeyRequired handler set");
 				return;

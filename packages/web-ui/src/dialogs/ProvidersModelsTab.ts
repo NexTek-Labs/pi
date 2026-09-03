@@ -71,7 +71,7 @@ export class ProvidersModelsTab extends SettingsTab {
 		this.requestUpdate();
 	}
 
-	private renderKnownProviders(): TemplateResult {
+	protected renderKnownProviders(): TemplateResult {
 		const providers = getProviders();
 
 		return html`
@@ -89,7 +89,7 @@ export class ProvidersModelsTab extends SettingsTab {
 		`;
 	}
 
-	private renderCustomProviders(): TemplateResult {
+	protected renderCustomProviders(): TemplateResult {
 		const isAutoDiscovery = (type: string) =>
 			type === "ollama" || type === "llama.cpp" || type === "vllm" || type === "lmstudio";
 
