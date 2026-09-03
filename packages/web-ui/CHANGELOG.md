@@ -4,7 +4,7 @@
 
 ### Added
 
-- vitest harness (`npm test`), an in-memory `StorageBackend` for tests, and contract tests for the upcoming `McpServersStore` / `describeMcpServer` / `redactMcpServer` and `AppStorage.mcpServers` (written before the implementation; see NexTek-Labs/pi#7).
+- vitest harness (`vitest.config.ts`; run with `npx tsx ../../node_modules/vitest/dist/cli.js --run` until the implementation lands and adds the `test` script), an in-memory `StorageBackend` for tests, and contract tests for the upcoming `McpServersStore` / `describeMcpServer` / `redactMcpServer` and `AppStorage.mcpServers`: no header value ever appears in a description line or a redacted copy (written before the implementation; see NexTek-Labs/pi#7).
 
 ### Fixed
 

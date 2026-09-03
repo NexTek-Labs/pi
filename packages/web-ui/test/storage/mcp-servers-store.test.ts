@@ -24,6 +24,7 @@ import { SettingsStore } from "../../src/storage/stores/settings-store.ts";
 import { MemoryStorageBackend } from "./memory-backend.ts";
 
 const SECRET = "Bearer sk-live-THIS-MUST-NEVER-BE-SHOWN";
+const MASK = "••••••••";
 
 function entry(overrides: Partial<McpServerEntry> = {}): McpServerEntry {
 	return {
@@ -105,26 +106,34 @@ describe("describeMcpServer", () => {
 		expect(text).not.toContain("Gin");
 	});
 
-	it("says there are no headers when there are none", () => {
-		const text = describeMcpServer(entry({ headers: undefined }));
-		expect(text).toContain("gbrain");
-		expect(text).not.toContain("undefined");
+	it("says there are no headers when there are none, for undefined and for an empty object", () => {
+		for (const headers of [undefined, {}]) {
+			const text = describeMcpServer(entry({ headers }));
+			expect(text).toContain("gbrain");
+			expect(text).not.toContain("undefined");
+			expect(text).not.toMatch(/[1-9]\s*header/);
+		}
 	});
 });
 
 describe("redactMcpServer", () => {
-	it("keeps header names, masks every value, and does not mutate the input", () => {
+	it("keeps header names, replaces every value with the fixed mask, and does not mutate the input", () => {
 		const server = entry({ headers: { Authorization: SECRET, "X-Honcho-User-Name": "Gin" } });
 		const redacted = redactMcpServer(server);
 		expect(Object.keys(redacted.headers ?? {})).toEqual(["Authorization", "X-Honcho-User-Name"]);
-		for (const value of Object.values(redacted.headers ?? {})) {
-			expect(value).not.toContain(SECRET);
-			expect(value).not.toBe("Gin");
-			expect(value.length).toBeGreaterThan(0);
-		}
-		expect(JSON.stringify(redacted)).not.toContain("sk-live");
+		// The mask is fixed, so a truncated, upper-cased or otherwise derived value cannot pass.
+		expect(redacted.headers).toEqual({ Authorization: MASK, "X-Honcho-User-Name": MASK });
+		expect(SECRET.toLowerCase()).not.toContain(MASK.toLowerCase());
+		expect(JSON.stringify(redacted).toLowerCase()).not.toContain("sk-live");
 		expect(server.headers?.Authorization).toBe(SECRET);
 		expect(redacted).not.toBe(server);
+		expect(redacted.headers).not.toBe(server.headers);
+	});
+
+	it("treats an empty headers object like no headers", () => {
+		const redacted = redactMcpServer(entry({ headers: {} }));
+		expect(redacted.headers).toEqual({});
+		expect(JSON.stringify(redacted)).not.toContain(MASK);
 	});
 
 	it("leaves an entry without headers unchanged in shape", () => {
