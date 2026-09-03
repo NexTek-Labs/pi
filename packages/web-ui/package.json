@@ -14,7 +14,8 @@
 		"build": "tsc -p tsconfig.build.json && tailwindcss -i ./src/app.css -o ./dist/app.css --minify",
 		"dev": "concurrently --names \"build,example\" --prefix-colors \"cyan,green\" \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"tailwindcss -i ./src/app.css -o ./dist/app.css --watch\" \"npm run dev --prefix example\"",
 		"dev:tsc": "concurrently --names \"build\" --prefix-colors \"cyan\" \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"tailwindcss -i ./src/app.css -o ./dist/app.css --watch\"",
-		"check": "biome check --write --error-on-warnings . && tsc --noEmit && cd example && biome check --write --error-on-warnings . && tsc --noEmit"
+		"check": "biome check --write --error-on-warnings . && tsc --noEmit && cd example && biome check --write --error-on-warnings . && tsc --noEmit",
+		"test": "vitest --run"
 	},
 	"dependencies": {
 		"@lmstudio/sdk": "^1.5.0",
@@ -36,7 +37,8 @@
 		"@mariozechner/mini-lit": "^0.2.0",
 		"@tailwindcss/cli": "^4.0.0-beta.14",
 		"concurrently": "^9.2.1",
-		"typescript": "^5.7.3"
+		"typescript": "^5.7.3",
+		"vitest": "^3.2.4"
 	},
 	"keywords": [
 		"ai",

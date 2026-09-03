@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- vitest harness (`npm test`), an in-memory `StorageBackend` for tests, and contract tests for the upcoming `McpServersStore` / `describeMcpServer` / `redactMcpServer` and `AppStorage.mcpServers` (written before the implementation; see NexTek-Labs/pi#7).
+
 ### Fixed
 
 - Custom providers no longer trigger the API-key prompt on send; the default `getApiKey` now falls back to the key stored on the custom provider record. A custom provider whose name collides with a built-in provider is ignored for both, so it cannot shadow a cloud provider.
