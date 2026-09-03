@@ -44,6 +44,9 @@ jobs:
 
       - name: Fetch upstream
         # A fork: commits reachable from upstream are not ours to label.
+        # The upstream URL is pinned here on purpose. This repo has renamed once already
+        # (badlogic/pi-mono -> earendil-works/pi, see sitegeist-nex CLAUDE.md); if this step
+        # starts failing on every push, check for another rename before anything else.
         if: github.event_name == 'push'
         run: git remote add upstream https://github.com/earendil-works/pi.git && git fetch --no-tags upstream main
 

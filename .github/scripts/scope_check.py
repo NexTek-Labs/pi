@@ -73,10 +73,15 @@ def glob_to_re(pat: str) -> re.Pattern:
         c = pat[i]
         if c == "*":
             if pat[i : i + 2] == "**":
-                out.append(".*")
                 i += 2
                 if pat[i : i + 1] == "/":
+                    # `**/` = zero or more whole directories. Emitting `.*` and swallowing the
+                    # `/` made `**/foo.ts` match `src/myfoo.ts` and `a/**/b` match `a/xb`
+                    # (advisor consultation SGNEX-ADVISOR-0903-heron, 2026-09-04).
+                    out.append("(?:.*/)?")
                     i += 1
+                else:
+                    out.append(".*")
                 continue
             out.append("[^/]*")
         elif c == "?":
@@ -161,5 +166,26 @@ def main() -> None:
     print("scope-check passed")
 
 
+def self_test() -> None:
+    cases = [
+        ("**/foo.ts", "foo.ts", True),
+        ("**/foo.ts", "src/a/foo.ts", True),
+        ("**/foo.ts", "src/myfoo.ts", False),
+        ("a/**/b", "a/b", True),
+        ("a/**/b", "a/x/y/b", True),
+        ("a/**/b", "a/xb", False),
+        ("docs/**", "docs/a/b.md", True),
+        ("db/*.sql", "db/sub/a.sql", False),
+        ("src/?.ts", "src/a.ts", True),
+    ]
+    for pat, path, want in cases:
+        got = bool(glob_to_re(pat).match(path))
+        assert got == want, f"{pat!r} vs {path!r}: expected {want}, got {got}"
+    print(f"scope_check self-test: {len(cases)} cases ok")
+
+
 if __name__ == "__main__":
-    main()
+    if "--self-test" in sys.argv:
+        self_test()
+    else:
+        main()
