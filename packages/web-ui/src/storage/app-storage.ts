@@ -1,4 +1,5 @@
 import type { CustomProvidersStore } from "./stores/custom-providers-store.ts";
+import type { McpServersStore } from "./stores/mcp-servers-store.ts";
 import type { ProviderKeysStore } from "./stores/provider-keys-store.ts";
 import type { SessionsStore } from "./stores/sessions-store.ts";
 import type { SettingsStore } from "./stores/settings-store.ts";
@@ -14,6 +15,8 @@ export class AppStorage {
 	readonly providerKeys: ProviderKeysStore;
 	readonly sessions: SessionsStore;
 	readonly customProviders: CustomProvidersStore;
+	/** Optional: only present when the host app configures MCP servers. */
+	readonly mcpServers: McpServersStore | undefined;
 
 	constructor(
 		settings: SettingsStore,
@@ -21,11 +24,13 @@ export class AppStorage {
 		sessions: SessionsStore,
 		customProviders: CustomProvidersStore,
 		backend: StorageBackend,
+		mcpServers?: McpServersStore,
 	) {
 		this.settings = settings;
 		this.providerKeys = providerKeys;
 		this.sessions = sessions;
 		this.customProviders = customProviders;
+		this.mcpServers = mcpServers;
 		this.backend = backend;
 	}
 

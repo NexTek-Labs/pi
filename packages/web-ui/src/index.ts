@@ -10,6 +10,7 @@ export { ConsoleBlock } from "./components/ConsoleBlock.ts";
 export { CustomProviderCard } from "./components/CustomProviderCard.ts";
 export { ExpandableSection } from "./components/ExpandableSection.ts";
 export { Input } from "./components/Input.ts";
+export { McpServerCard, type McpServerStatus } from "./components/McpServerCard.ts";
 export { MessageEditor } from "./components/MessageEditor.ts";
 export { MessageList } from "./components/MessageList.ts";
 // Message components
@@ -56,6 +57,8 @@ export { ThinkingBlock } from "./components/ThinkingBlock.ts";
 export { ApiKeyPromptDialog } from "./dialogs/ApiKeyPromptDialog.ts";
 export { AttachmentOverlay } from "./dialogs/AttachmentOverlay.ts";
 export { CustomProviderDialog } from "./dialogs/CustomProviderDialog.ts";
+export { McpServerDialog } from "./dialogs/McpServerDialog.ts";
+export { McpServersTab } from "./dialogs/McpServersTab.ts";
 // Dialogs
 export { ModelSelector } from "./dialogs/ModelSelector.ts";
 export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.ts";
@@ -78,6 +81,12 @@ export type {
 	CustomProviderType,
 } from "./storage/stores/custom-providers-store.ts";
 export { CustomProvidersStore } from "./storage/stores/custom-providers-store.ts";
+export {
+	describeMcpServer,
+	type McpServerEntry,
+	McpServersStore,
+	redactMcpServer,
+} from "./storage/stores/mcp-servers-store.ts";
 export { ProviderKeysStore } from "./storage/stores/provider-keys-store.ts";
 export { SessionsStore } from "./storage/stores/sessions-store.ts";
 export { SettingsStore } from "./storage/stores/settings-store.ts";
