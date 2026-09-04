@@ -4,6 +4,7 @@
 
 ### Added
 
+- `McpServersStore` (`mcpServers` on `AppStorage`, optional sixth constructor argument) with `describeMcpServer()` and `redactMcpServer()`, plus an `McpServersTab` settings tab, an `McpServerDialog` add/edit dialog and an `McpServerCard` row: MCP server urls, headers and tool-name prefixes are stored in the browser, and a header value is never rendered — the card shows only the count from `describeMcpServer()`, an edited header keeps its stored value unless a new one is typed, and "Test connection" reports the tool count from `McpHttpClient.listTools()`.
 - vitest harness (`vitest.config.ts`; run with `npx tsx ../../node_modules/vitest/dist/cli.js --run` until the implementation lands and adds the `test` script), an in-memory `StorageBackend` for tests, and contract tests for the upcoming `McpServersStore` / `describeMcpServer` / `redactMcpServer` and `AppStorage.mcpServers`: no header value ever appears in a description line or a redacted copy (written before the implementation; see NexTek-Labs/pi#7).
 
 ### Fixed
