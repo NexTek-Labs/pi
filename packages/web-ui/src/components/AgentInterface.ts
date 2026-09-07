@@ -190,6 +190,7 @@ export class AgentInterface extends LitElement {
 					this.requestUpdate();
 					// The run is idle only after every agent_end listener returned and finishRun()
 					// flipped isStreaming; no event follows that, so re-render once it settles.
+					// Never await this here: the promise resolves after this listener returns.
 					this.session?.waitForIdle().then(() => this.requestUpdate());
 					break;
 				case "message_update":
