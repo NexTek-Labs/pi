@@ -9,7 +9,16 @@ import { repeat } from "lit/directives/repeat.js";
 import { renderMessage } from "./message-renderer-registry.ts";
 
 export class MessageList extends LitElement {
-	@property({ type: Array }) messages: AgentMessage[] = [];
+	// The agent appends to its messages array in place, so the reference the host passes
+	// never changes; compare length as well or a completed message never renders.
+	// Caveat: a same-length replacement of an element (no such mutation exists today; the
+	// agent only pushes or reassigns the whole array) would not be noticed here.
+	@property({
+		attribute: false,
+		hasChanged: (next: AgentMessage[], prev: AgentMessage[] | undefined) =>
+			next !== prev || next.length !== (prev?.length ?? -1),
+	})
+	messages: AgentMessage[] = [];
 	@property({ type: Array }) tools: AgentTool[] = [];
 	@property({ type: Object }) pendingToolCalls?: ReadonlySet<string>;
 	@property({ type: Boolean }) isStreaming: boolean = false;

@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- The completed assistant message renders as soon as it ends: `MessageList` re-renders when the messages array grows in place, and `AgentInterface` re-renders once the run is idle (`agent_end` fires before `isStreaming` flips). Before, the finished answer vanished until the panel was reopened.
 - Custom providers no longer trigger the API-key prompt on send; the default `getApiKey` now falls back to the key stored on the custom provider record. A custom provider whose name collides with a built-in provider is ignored for both, so it cannot shadow a cloud provider.
 
 ### Changed
